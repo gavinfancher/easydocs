@@ -44,7 +44,9 @@
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Login failed');
         const next = new URLSearchParams(location.search).get('next');
-        location.href = (next && /^\/admin\/[\w-]*$/.test(next) ? next : '/admin/') + location.hash;  // back where you were
+        // Back where you were, as long as it's a page on this site's admin.
+        const safe = next && next.startsWith('/admin/') && !next.includes('//') && !next.includes('\\');
+        location.href = (safe ? next : '/admin/') + location.hash;
       } catch (e) {
         err.textContent = e.message;
         btn.disabled = false; btn.textContent = 'Log in';

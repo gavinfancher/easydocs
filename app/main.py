@@ -2,7 +2,8 @@
 
 Docs are plain .md files under DATA/docs (folders = sections).
 Uploaded images/files live under DATA/uploads and are referenced by absolute
-URLs (/uploads/<name>), so moving a doc never breaks its images.
+URLs (/uploads/<name>), so moving a doc never breaks its images. Upload folders
+are labels in DATA/upload-folders.json, so filing an upload never changes its URL.
 """
 
 import hashlib
@@ -16,8 +17,9 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -357,8 +359,140 @@ def save_home(body: HomeBody):
     return load_home()
 
 
+# ---------- upload folders ----------
+# Folders for uploads are only labels, kept in a small JSON file. Files stay flat in
+# DATA/uploads, so filing one away never changes its URL or breaks a doc's link.
+UPLOAD_FOLDERS_FILE = DATA_DIR / "upload-folders.json"
+
+
+def clean_upload_folder(rel: str) -> str:
+    """'' is the top level. Folder names are free text, minus slashes at the edges."""
+    parts = [p.strip() for p in rel.strip().strip("/").split("/") if p.strip()]
+    if any(len(p) > 80 or p in (".", "..") for p in parts):
+        raise HTTPException(400, "Invalid folder name")
+    return "/".join(parts)
+
+
+def with_parents(folder: str) -> set[str]:
+    parts = folder.split("/") if folder else []
+    return {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
+
+
+def load_upload_folders() -> dict:
+    try:
+        data = json.loads(UPLOAD_FOLDERS_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        data = {}
+    files = {k: v for k, v in data.get("files", {}).items() if v and (UPLOADS_DIR / k).is_file()}
+    folders = set(data.get("folders", []))
+    for f in [*folders, *files.values()]:
+        folders |= with_parents(f)
+    return {"folders": folders, "files": files}
+
+
+def save_upload_folders(meta: dict) -> None:
+    files = {k: v for k, v in sorted(meta["files"].items()) if v}  # '' = unsorted, no entry needed
+    out = {"folders": sorted(meta["folders"] - {""}, key=str.lower), "files": files}
+    tmp = UPLOAD_FOLDERS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    tmp.replace(UPLOAD_FOLDERS_FILE)
+
+
+def upload_path(name: str) -> Path:
+    f = (UPLOADS_DIR / name).resolve()
+    if f.parent != UPLOADS_DIR or not f.is_file() or f.name.startswith("."):
+        raise HTTPException(404, "File not found")
+    return f
+
+
+class UploadFolderBody(BaseModel):
+    path: str
+
+
+class MoveUploadFolderBody(BaseModel):
+    src: str
+    dst: str
+
+
+class MoveUploadsBody(BaseModel):
+    names: list[str]
+    folder: str = ""
+
+
+@app.post("/admin/api/upload-folders", dependencies=[admin])
+def create_upload_folder(body: UploadFolderBody):
+    path = clean_upload_folder(body.path)
+    if not path:
+        raise HTTPException(400, "Give the folder a name")
+    meta = load_upload_folders()
+    if path in meta["folders"]:
+        raise HTTPException(409, "That folder already exists")
+    meta["folders"] |= with_parents(path)
+    save_upload_folders(meta)
+    return {"path": path}
+
+
+def reparent(path: str, src: str, dst: str) -> str:
+    """Swap the `src` prefix of a folder path for `dst`."""
+    if path == src:
+        return dst
+    if path.startswith(src + "/"):
+        return (dst + "/" if dst else "") + path[len(src) + 1:]
+    return path
+
+
+@app.post("/admin/api/upload-folders/move", dependencies=[admin])
+def move_upload_folder(body: MoveUploadFolderBody):
+    """Rename or move a folder, along with everything inside it."""
+    src, dst = clean_upload_folder(body.src), clean_upload_folder(body.dst)
+    meta = load_upload_folders()
+    if not src or src not in meta["folders"]:
+        raise HTTPException(404, "Folder not found")
+    if not dst:
+        raise HTTPException(400, "Give the folder a name")
+    if dst == src:
+        return {"path": dst}
+    if dst.startswith(src + "/"):
+        raise HTTPException(400, "Can't move a folder into itself")
+    if dst in meta["folders"]:
+        raise HTTPException(409, "A folder with that name already exists there")
+    meta["folders"] = {reparent(f, src, dst) for f in meta["folders"]} | with_parents(dst)
+    meta["files"] = {k: reparent(v, src, dst) for k, v in meta["files"].items()}
+    save_upload_folders(meta)
+    return {"path": dst}
+
+
+@app.post("/admin/api/upload-folders/delete", dependencies=[admin])
+def delete_upload_folder(body: UploadFolderBody):
+    """Remove a folder. Nothing is deleted: what was inside moves up one level."""
+    path = clean_upload_folder(body.path)
+    meta = load_upload_folders()
+    if not path or path not in meta["folders"]:
+        raise HTTPException(404, "Folder not found")
+    parent = path.rpartition("/")[0]
+    meta["folders"] = {reparent(f, path, parent) for f in meta["folders"]} - {""}
+    meta["files"] = {k: reparent(v, path, parent) for k, v in meta["files"].items()}
+    save_upload_folders(meta)
+    return {"ok": True}
+
+
+@app.post("/admin/api/uploads/move", dependencies=[admin])
+def move_uploads(body: MoveUploadsBody):
+    folder = clean_upload_folder(body.folder)
+    meta = load_upload_folders()
+    for name in body.names:
+        upload_path(name)
+        if folder:
+            meta["files"][name] = folder
+        else:
+            meta["files"].pop(name, None)
+    meta["folders"] |= with_parents(folder)
+    save_upload_folders(meta)
+    return {"ok": True, "folder": folder}
+
+
 @app.post("/admin/api/uploads", dependencies=[admin])
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), folder: str = Form("")):
     name = Path(file.filename or "file").name
     ext = Path(name).suffix.lower()
     if not ext and file.content_type and file.content_type.startswith("image/"):
@@ -369,27 +503,35 @@ async def upload(file: UploadFile = File(...)):
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File too large (max 25 MB)")
+    folder = clean_upload_folder(folder)
     (UPLOADS_DIR / final).write_bytes(data)
-    return {"url": f"/uploads/{final}", "name": Path(name).stem, "is_image": ext in IMAGE_EXTS}
+    if folder:
+        meta = load_upload_folders()
+        meta["files"][final] = folder
+        meta["folders"] |= with_parents(folder)
+        save_upload_folders(meta)
+    return {"url": f"/uploads/{final}", "name": Path(name).stem, "is_image": ext in IMAGE_EXTS, "folder": folder}
 
 
 @app.get("/admin/api/uploads", dependencies=[admin])
 def list_uploads():
-    """Every uploaded file, newest first, with the docs that reference it."""
+    """Upload folders, plus every uploaded file (newest first) with its folder and the docs that use it."""
     docs = {f.relative_to(DOCS_DIR).as_posix()[:-3]: f.read_text(encoding="utf-8")
             for f in DOCS_DIR.rglob("*.md")}
     home_body = load_home()["body"]
     files = sorted((f for f in UPLOADS_DIR.iterdir() if f.is_file() and not f.name.startswith(".")),
                    key=lambda f: f.stat().st_mtime, reverse=True)
-    return [{
+    meta = load_upload_folders()
+    return {"folders": sorted(meta["folders"], key=str.lower), "files": [{
         "name": f.name,
+        "folder": meta["files"].get(f.name, ""),
         "url": f"/uploads/{f.name}",
         "size": f.stat().st_size,
         "modified": int(f.stat().st_mtime),
         "is_image": f.suffix.lower() in IMAGE_EXTS,
         "used_in": sorted(path for path, text in docs.items() if f"/uploads/{f.name}" in text),
         "on_home": f"/uploads/{f.name}" in home_body,
-    } for f in files]
+    } for f in files]}
 
 
 class RenameUploadBody(BaseModel):
@@ -403,9 +545,7 @@ def file_slug(name: str) -> str:
 @app.post("/admin/api/uploads/{name}/rename", dependencies=[admin])
 def rename_upload(name: str, body: RenameUploadBody):
     """Rename an uploaded file and update every doc that links to it."""
-    f = (UPLOADS_DIR / name).resolve()
-    if f.parent != UPLOADS_DIR or not f.is_file():
-        raise HTTPException(404, "File not found")
+    f = upload_path(name)
     m = re.match(r"^(.*?)(?:-([0-9a-f]{8}))?$", f.stem)
     old_stem, tag = m.group(1), m.group(2) or uuid.uuid4().hex[:8]
     new_stem = file_slug(Path(body.name.strip()).stem if body.name.strip().lower().endswith(f.suffix.lower()) else body.name.strip())
@@ -414,10 +554,15 @@ def rename_upload(name: str, body: RenameUploadBody):
         return {"name": final, "url": f"/uploads/{final}", "docs": []}
     if (UPLOADS_DIR / final).exists():
         raise HTTPException(409, "A file with that name already exists")
+    meta = load_upload_folders()  # before the rename: loading drops entries for missing files
     f.rename(UPLOADS_DIR / final)
+    if name in meta["files"]:
+        meta["files"][final] = meta["files"].pop(name)
+        save_upload_folders(meta)
     old_url, new_url = f"/uploads/{name}", f"/uploads/{final}"
     # Also swap the alt/link text if it's still the old auto-generated name.
-    alt_re = re.compile(r"(!?\[)" + re.escape(old_stem) + r"(\]\(" + re.escape(old_url) + r"\))")
+    # (An image's alt text may end in a size, like "diagram|50%"; that part is kept.)
+    alt_re = re.compile(r"(!?\[)" + re.escape(old_stem) + r"((?:\s*\|[^\]]*)?\]\(" + re.escape(old_url) + r"\))")
     changed = []
     for doc in DOCS_DIR.rglob("*.md"):
         text = doc.read_text(encoding="utf-8")
@@ -435,10 +580,10 @@ def rename_upload(name: str, body: RenameUploadBody):
 
 @app.delete("/admin/api/uploads/{name}", dependencies=[admin])
 def delete_upload(name: str):
-    f = (UPLOADS_DIR / name).resolve()
-    if f.parent != UPLOADS_DIR or not f.is_file():
-        raise HTTPException(404, "File not found")
-    f.unlink()
+    upload_path(name).unlink()
+    meta = load_upload_folders()
+    if meta["files"].pop(name, None) is not None:
+        save_upload_folders(meta)
     return {"ok": True}
 
 
@@ -472,11 +617,11 @@ def admin_page(request: Request):
 
 
 @app.get("/admin/edit")
-def editor_page(request: Request):
-    # The browser carries the #doc fragment through this redirect, so the
-    # login page can send you back to the doc you were trying to edit.
+@app.get("/admin/edit/{rel:path}")
+def editor_page(request: Request, rel: str = ""):
+    # /admin/edit/<doc path> opens that doc; the page reads the path itself.
     if not is_logged_in(request):
-        return RedirectResponse("/admin/login?next=/admin/edit")
+        return RedirectResponse("/admin/login?next=" + quote(request.url.path, safe=""))
     return FileResponse(STATIC_DIR / "editor.html")
 
 

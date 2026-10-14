@@ -23,7 +23,7 @@
     #tree { min-height: 120px; }
     #tree .row a { cursor: pointer; }
     .uploads-card { padding: 0; overflow: hidden; }
-    .uploads-card .lib-grid { min-height: 240px; }
+    .uploads-card .lib-body { min-height: 420px; }
     .uploads-tools { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
     .uploads-tools .search { flex: 1; max-width: 320px; }
     .home-form { padding: 20px; }
@@ -78,7 +78,7 @@
         <div class="panel-head">
           <h1>Uploads</h1>
         </div>
-        <p class="panel-sub">Every image and file you've added. Copy one into any doc, or clean up files nothing uses.</p>
+        <p class="panel-sub">Every image and file you've added. Drag them into folders to keep things tidy (links never break), copy one into any doc, or clean up files nothing uses.</p>
         <div class="card uploads-card" id="uploads-card">
           <div class="uploads-tools">
             <input class="search" id="lib-search" type="search" placeholder="Filter by name…" autocomplete="off">
@@ -86,7 +86,10 @@
             <button id="lib-upload" class="primary" data-icon="upload">Upload</button>
             <input type="file" id="lib-file-input" multiple hidden>
           </div>
-          <div class="lib-grid" id="lib-grid"></div>
+          <div class="lib-body">
+            <nav class="lib-folders" id="lib-folders" aria-label="Upload folders"></nav>
+            <div class="lib-grid" id="lib-grid"></div>
+          </div>
         </div>
       </section>
 
@@ -127,7 +130,7 @@
     setupTree($('tree'));
 
     const library = createLibrary({
-      grid: $('lib-grid'), search: $('lib-search'), dropZone: $('uploads-card'),
+      grid: $('lib-grid'), search: $('lib-search'), folderNav: $('lib-folders'), dropZone: $('uploads-card'),
       onLoad: items => { $('upload-count').textContent = items.length || ''; },
     });
 
@@ -214,7 +217,7 @@
       try { $('brand').firstChild.textContent = (await api('/api/config')).title + ' '; } catch { }
       await refreshTree();
       showTab();
-      api('/admin/api/uploads').then(u => { $('upload-count').textContent = u.length || ''; }).catch(() => { });
+      api('/admin/api/uploads').then(u => { $('upload-count').textContent = u.files.length || ''; }).catch(() => { });
     })();
   </script>
 </body>

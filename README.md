@@ -34,8 +34,14 @@ Open http://localhost:8000.
 - **Images**: paste a screenshot, drag and drop a file, or click **Image**. It's uploaded
   and the markdown link is inserted for you. Images use absolute `/uploads/...` URLs,
   so renaming or moving docs never breaks them.
+- **Resize images**: click an image in the editor's preview, then pick 25% / 50% / 75% / Full
+  or drag its corner. This writes the size into the markdown as `![alt|50%](/uploads/...)`
+  (or `|300` for pixels), so it looks the same on the site.
 - **Reuse uploads**: **From uploads** inserts something you've already uploaded. The admin
   panel's **Uploads** tab shows every file and which docs use it.
+- **Upload folders**: in the Uploads tab (or the **From uploads** picker), drag files onto a
+  folder in the left-hand list, or right-click for more. Folders only organize; a file's URL
+  never changes, so filing it away can't break a doc.
 - **Diagrams**: write a ` ```mermaid ` block and it renders as a diagram. Exported PNG/SVG
   diagrams from Excalidraw, draw.io, etc. work like any image.
 - **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘I italic, ⌘K link.
@@ -58,6 +64,8 @@ Everything is plain files, so back up `data/` and you've backed up everything:
 data/
   docs/       # your .md files, folders = sidebar sections
   uploads/    # pasted/dropped images and files
+  upload-folders.json   # which upload is in which folder
+  home.json             # home page settings
 ```
 
 You can also edit the `.md` files directly; changes show up on refresh.

@@ -28,7 +28,24 @@
       background: var(--bg); color: var(--text);
       font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2;
     }
-    #preview-pane { border-left: 1px solid var(--border); }
+    #preview-pane { border-left: 1px solid var(--border); position: relative; }
+    #preview img { cursor: pointer; }
+    #preview img:hover { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+    .img-tools { position: absolute; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; z-index: 5; }
+    .img-bar {
+      position: absolute; left: 0; bottom: 100%; margin-bottom: 8px; display: flex; align-items: center; gap: 2px;
+      padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+      box-shadow: 0 6px 20px rgba(0,0,0,.15); pointer-events: auto; white-space: nowrap;
+    }
+    .img-bar button { height: 26px; padding: 0 8px; font-size: 12px; border: none; background: none; }
+    .img-bar button:hover { background: var(--bg-hover); }
+    .img-bar button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+    .img-size { font-size: 12px; font-weight: 600; color: var(--accent); padding: 0 8px; border-left: 1px solid var(--border); margin-left: 2px; }
+    .img-handle {
+      position: absolute; right: -8px; bottom: -8px; width: 16px; height: 16px; pointer-events: auto; cursor: nwse-resize;
+      background: var(--accent); border: 2px solid var(--bg); border-radius: 50%; touch-action: none;
+    }
+    .img-tools.dragging { outline-style: dashed; }
     #preview-pane .markdown { padding: 24px 32px 80px; }
     body.drag-over #editor { outline: 3px dashed var(--accent); outline-offset: -10px; }
     .placeholder { margin: auto; text-align: center; color: var(--text-soft); padding: 40px; }
@@ -44,6 +61,9 @@
     .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 10px 8px; }
     .sidebar-head span { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-soft); }
     .sidebar-head button { height: 28px; font-size: 13px; padding: 0 9px; }
+    /* Let the tree fill the sidebar so right-click and drop work on the empty space below it. */
+    .sidebar { display: flex; flex-direction: column; }
+    #tree { flex: 1; border-radius: 6px; }
   </style>
 </head>
 <body>
@@ -58,7 +78,7 @@
     <nav class="sidebar">
       <div class="sidebar-head">
         <span>Docs</span>
-        <button id="new-doc" data-icon="plus" title="New doc">New</button>
+        <button id="new-doc" data-icon="plus" title="New doc or folder">New</button>
       </div>
       <div id="tree" class="tree"></div>
     </nav>
@@ -100,8 +120,11 @@
         <button id="lib-close" class="icon-btn" data-icon="x" aria-label="Close"></button>
         <input type="file" id="lib-file-input" multiple hidden>
       </div>
-      <div class="modal-hint">Click an item to insert it at your cursor. Drop files here to upload them.</div>
-      <div class="lib-grid" id="lib-grid"></div>
+      <div class="modal-hint">Click an item to insert it at your cursor. Drop files here to upload them into the open folder.</div>
+      <div class="lib-body">
+        <nav class="lib-folders" id="lib-folders" aria-label="Upload folders"></nav>
+        <div class="lib-grid" id="lib-grid"></div>
+      </div>
     </div>
   </div>
 
@@ -124,10 +147,15 @@
     const confirmDiscard = async () => !isDirty() || askConfirm('Discard unsaved changes?',
       `Your edits to "${current}" haven't been saved.`, { okLabel: 'Discard', danger: true });
 
-    function showPath() {
+    // The open doc lives in the URL: /admin/edit/guides/setup
+    const pathFromUrl = () => {
+      const p = location.pathname.replace(/^\/admin\/edit\/?/, '');
+      try { return decodeURIComponent(p.replace(/\/$/, '')); } catch { return p; }
+    };
+    function showPath({ push = false } = {}) {
       $('doc-path').textContent = current;
       $('view-link').href = '/docs/' + current;
-      history.replaceState(null, '', '#' + encodeURIComponent(current));
+      if (location.pathname !== editorUrl(current)) history[push ? 'pushState' : 'replaceState'](null, '', editorUrl(current));
     }
     function closeDoc() {
       current = null; savedContent = '';
@@ -135,10 +163,25 @@
       history.replaceState(null, '', '/admin/edit');
     }
 
+    /** Open a doc from a click in the page (no reload), asking first if there are unsaved edits. */
+    async function navigate(path) {
+      if (path === current) return;
+      if (!await confirmDiscard()) return;
+      savedContent = editor.value;  // discarding: don't ask again
+      await openDoc(path, { push: true });
+    }
+    document.addEventListener('click', e => {
+      const a = e.target.closest('a[href^="/admin/edit/"]');
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0 || a.target === '_blank') return;
+      e.preventDefault();
+      navigate(decodeURIComponent(new URL(a.href).pathname.replace(/^\/admin\/edit\//, '')));
+    });
+
     // ---------- tree (shared logic in admin.js) ----------
     Object.assign(docHooks, {
       active: () => current,
-      href: p => '#' + encodeURIComponent(p),
+      href: editorUrl,
+      open: path => navigate(path),
       defaultFolder: () => current ? parentOf(current) : '',
       beforeChange: async path => {
         if (isDirty() && (current === path || current.startsWith(path + '/'))) await save();
@@ -154,7 +197,7 @@
       afterCreate: async path => {
         if (!await confirmDiscard()) return;
         current = null;
-        await openDoc(path);
+        await openDoc(path, { push: true });
         editor.setSelectionRange(editor.value.length, editor.value.length);
       },
       openContent: path => path === current ? editor.value : undefined,
@@ -164,16 +207,17 @@
       },
     });
     setupTree($('tree'));
-    $('new-doc').onclick = () => newDoc();
+    $('new-doc').onclick = e => newMenu(e.currentTarget);
 
     // ---------- open / save ----------
-    async function openDoc(path) {
+    async function openDoc(path, { push = false } = {}) {
       if (path === current) return;
       try {
         const doc = await api('/api/docs/' + path);
+        imgTools.clear();
         current = doc.path; savedContent = doc.content; editor.value = doc.content;
         $('workspace').hidden = false; $('empty-state').hidden = true;
-        showPath();
+        showPath({ push });
         document.title = `${doc.title} · Editor`;
         setActive($('tree'), current);
         updateDirty(); schedulePreview(0);
@@ -197,21 +241,24 @@
 
     $('save').onclick = save;
     $('doc-more').onclick = e => showMenu(e.currentTarget, [
-      { label: 'Rename', action: () => renameDoc(current) },
-      { label: 'Move to…', action: () => moveDialog(current, 'doc') },
+      { label: 'Copy link', icon: 'link', action: () => copyLink(current) },
+      { label: 'Rename…', icon: 'edit', action: () => renameDoc(current) },
+      { label: 'Move to…', icon: 'move', action: () => moveDialog(current, 'doc') },
       'sep',
-      { label: 'Delete', danger: true, action: () => deleteDoc(current) },
+      { label: 'Delete', icon: 'trash', danger: true, action: () => deleteDoc(current) },
     ]);
     $('toggle-preview').onclick = () => {
       if (window.innerWidth <= 800) document.body.classList.toggle('editor-hidden');
       else document.body.classList.toggle('preview-hidden');
     };
 
-    window.addEventListener('hashchange', async () => {
-      const p = decodeURIComponent(location.hash.slice(1));
-      if (!p || p === current) return;
-      if (!await confirmDiscard()) { history.replaceState(null, '', '#' + encodeURIComponent(current)); return; }
-      openDoc(p);
+    // Back / forward buttons.
+    window.addEventListener('popstate', async () => {
+      const p = pathFromUrl();
+      if (p === current) return;
+      if (!await confirmDiscard()) { history.pushState(null, '', current ? editorUrl(current) : '/admin/edit'); return; }
+      savedContent = editor.value;
+      p ? openDoc(p) : closeDoc();
     });
     window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -219,8 +266,102 @@
     let previewTimer;
     function schedulePreview(ms = 250) {
       clearTimeout(previewTimer);
-      previewTimer = setTimeout(() => renderMarkdown(editor.value, preview), ms);
+      previewTimer = setTimeout(async () => { await renderMarkdown(editor.value, preview); imgTools.refresh(); }, ms);
     }
+
+    // ---------- resize images: click one in the preview ----------
+    // The size is stored in the markdown as ![alt|50%](url), so it shows the same on the site.
+    const imgTools = (() => {
+      const pane = $('preview-pane');
+      const box = document.createElement('div');
+      box.className = 'img-tools'; box.hidden = true;
+      box.innerHTML = `<div class="img-bar">
+          ${['25%', '50%', '75%'].map(w => `<button data-w="${w}">${w}</button>`).join('')}
+          <button data-w="">Full</button>
+          <span class="img-size"></span>
+        </div>
+        <div class="img-handle" title="Drag to resize"></div>`;
+      pane.append(box);
+      let sel = null;  // { src, k }: the k-th image in the doc with this src
+
+      const imgs = () => [...preview.querySelectorAll('img')];
+      const current = () => sel && imgs().filter(i => i.getAttribute('src') === sel.src)[sel.k];
+
+      function place() {
+        const img = current();
+        if (!img) { box.hidden = true; return; }
+        const p = pane.getBoundingClientRect(), r = img.getBoundingClientRect();
+        Object.assign(box.style, {
+          left: r.left - p.left + pane.scrollLeft + 'px', top: r.top - p.top + pane.scrollTop + 'px',
+          width: r.width + 'px', height: r.height + 'px',
+        });
+        const w = img.style.width;
+        // Only label sizes the buttons don't already show (e.g. 40% from dragging, or 120px).
+        const label = box.querySelector('.img-size');
+        label.textContent = ['', '25%', '50%', '75%'].includes(w) ? '' : w;
+        label.hidden = !label.textContent;
+        box.querySelectorAll('[data-w]').forEach(b => b.classList.toggle('on', b.dataset.w === w));
+        box.hidden = false;
+      }
+      function select(img) {
+        const src = img.getAttribute('src');
+        sel = { src, k: imgs().filter(i => i.getAttribute('src') === src).indexOf(img) };
+        if (!img.complete) img.addEventListener('load', place, { once: true });
+        place();
+      }
+      function clear() { sel = null; box.hidden = true; }
+
+      /** Rewrite the size in the markdown for the selected image (keeps undo working). */
+      function apply(width) {
+        const re = /!\[((?:\\.|[^\]\\])*)\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+        const hits = [...editor.value.matchAll(re)].filter(m => {
+          try { return m[2] === sel.src || encodeURI(m[2]).replace(/%25/g, '%') === sel.src; } catch { return false; }
+        });
+        const m = hits[sel.k];
+        if (!m) { toast('Couldn’t find that image in the markdown. Add |50% to its alt text by hand.'); return; }
+        const alt = splitImageSize(m[1]).alt + (width ? '|' + width : '');
+        const start = m.index + 2;
+        const { scrollTop } = editor;
+        editor.setSelectionRange(start, start + m[1].length);
+        insertText(alt);
+        editor.scrollTop = scrollTop;
+      }
+
+      box.addEventListener('click', e => {
+        const b = e.target.closest('[data-w]');
+        if (b) { current().style.width = b.dataset.w; place(); apply(b.dataset.w); }
+      });
+
+      // Drag the corner: snaps to 5% steps of the page width.
+      box.querySelector('.img-handle').addEventListener('pointerdown', e => {
+        const img = current(); if (!img) return;
+        e.preventDefault();
+        const handle = e.currentTarget, startX = e.clientX, startW = img.getBoundingClientRect().width;
+        const full = preview.getBoundingClientRect().width - parseFloat(getComputedStyle(preview).paddingLeft) - parseFloat(getComputedStyle(preview).paddingRight);
+        let pct = null;
+        handle.setPointerCapture(e.pointerId);
+        box.classList.add('dragging');
+        const move = ev => {
+          pct = Math.max(10, Math.min(100, Math.round((startW + ev.clientX - startX) / full * 20) * 5));
+          img.style.width = pct === 100 ? '' : pct + '%';
+          place();
+        };
+        const up = () => {
+          handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up);
+          box.classList.remove('dragging');
+          if (pct !== null) apply(pct === 100 ? '' : pct + '%');
+        };
+        handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up);
+      });
+
+      preview.addEventListener('click', e => {
+        const img = e.target.closest('img');
+        if (img) { e.preventDefault(); select(img); } else clear();
+      });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') clear(); });
+      window.addEventListener('resize', place);
+      return { refresh: () => sel && place(), clear };
+    })();
     editor.addEventListener('input', () => { updateDirty(); schedulePreview(); });
 
     // ---------- text editing ----------
@@ -313,13 +454,15 @@
 
     // ---------- "From uploads" picker ----------
     const library = createLibrary({
-      grid: $('lib-grid'), search: $('lib-search'), dropZone: document.querySelector('#library .modal'),
-      docLink: p => '#' + encodeURIComponent(p),
+      grid: $('lib-grid'), search: $('lib-search'), folderNav: $('lib-folders'), dropZone: document.querySelector('#library .modal'),
+      docLink: editorUrl,
       onInsert: item => { closeLibrary(); insertText(item.is_image ? ownLine(markdownFor(item)) : markdownFor(item)); toast('Inserted ' + displayName(item.name)); },
       // The server already rewrote saved docs; mirror that in the open (maybe unsaved) text.
       onRename: (oldUrl, newUrl, res) => {
         if (!current) return;
-        const swap = t => t.split(`[${res.old_stem}](${oldUrl})`).join(`[${res.new_stem}](${oldUrl})`).split(oldUrl).join(newUrl);
+        const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const altRe = new RegExp(`(\\[)${esc(res.old_stem)}((?:\\s*\\|[^\\]]*)?\\]\\(${esc(oldUrl)}\\))`, 'g');
+        const swap = t => t.replace(altRe, `$1${res.new_stem}$2`).split(oldUrl).join(newUrl);
         const dirty = editor.value !== savedContent;
         savedContent = swap(savedContent);
         if (editor.value.includes(oldUrl)) { editor.value = swap(editor.value); schedulePreview(0); }
@@ -343,7 +486,9 @@
     (async () => {
       try { $('brand').firstChild.textContent = (await api('/api/config')).title + ' '; } catch { }
       await refreshTree();
-      const p = decodeURIComponent(location.hash.slice(1));
+      // Old links looked like /admin/edit#guides/setup; send them to the new address.
+      const legacy = location.hash.length > 1 && !pathFromUrl() ? decodeURIComponent(location.hash.slice(1)) : '';
+      const p = legacy || pathFromUrl();
       if (p) openDoc(p);
     })();
   </script>

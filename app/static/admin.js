@@ -20,7 +20,7 @@ const parentOf = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const join = (folder, name) => folder ? folder + '/' + name : name;
 const fileSlug = title => slugify(title).replace(/_/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'untitled';
 const cleanFolderName = n => n.replace(/[\/\\]+/g, ' ').trim();
-const editorUrl = path => '/admin/edit#' + encodeURIComponent(path);
+const editorUrl = path => '/admin/edit/' + path.split('/').map(encodeURIComponent).join('/');
 
 // ---------- doc tree management ----------
 
@@ -33,6 +33,7 @@ const editorUrl = path => '/admin/edit#' + encodeURIComponent(path);
  *   afterMove(src, dst)     -> something moved
  *   afterDelete(path)       -> a doc was deleted
  *   afterCreate(path)       -> a doc was created
+ *   open(path)              -> open a doc in the editor
  *   openContent(path)       -> unsaved editor content for `path`, if it's open
  *   contentReplaced(path, content) -> `path`'s content was rewritten (title change)
  *   afterRefresh()          -> the tree was reloaded
@@ -45,6 +46,7 @@ const docHooks = {
   afterMove: () => { },
   afterDelete: () => { },
   afterCreate: path => { location.href = editorUrl(path); },
+  open: path => { location.href = editorUrl(path); },
   openContent: () => undefined,
   contentReplaced: () => { },
   afterRefresh: () => { },
@@ -71,11 +73,11 @@ function findItem(path, items = tree) {
 
 /** Folder choices for a dropdown; `exclude` hides a folder and everything inside it. */
 function folderOptions(exclude = null) {
-  const out = [{ value: '', label: 'Top level (no folder)' }];
+  const out = [{ value: '', label: 'Top level', icon: 'home' }];
   const walk = (items, depth) => {
     for (const it of items) {
       if (it.type !== 'folder' || it.path === exclude) continue;
-      out.push({ value: it.path, label: '    '.repeat(depth) + prettyName(it.name) });
+      out.push({ value: it.path, label: prettyName(it.name), depth });
       walk(it.children, depth + 1);
     }
   };
@@ -92,7 +94,7 @@ async function newDoc(folder) {
     title: 'New doc',
     fields: [
       { name: 'title', label: 'Title', placeholder: 'e.g. Setup guide' },
-      { name: 'folder', label: 'Folder', type: 'select', options: folderOptions(), value: folder ?? docHooks.defaultFolder() },
+      { name: 'folder', label: 'Folder', type: 'folder', options: folderOptions(), value: folder ?? docHooks.defaultFolder() },
     ],
     okLabel: 'Create doc',
   });
@@ -110,7 +112,7 @@ async function newFolder(parent) {
     title: 'New folder',
     fields: [
       { name: 'name', label: 'Name', placeholder: 'e.g. Guides' },
-      { name: 'parent', label: 'Inside', type: 'select', options: folderOptions(), value: parent ?? docHooks.defaultFolder() },
+      { name: 'parent', label: 'Inside', type: 'folder', options: folderOptions(), value: parent ?? docHooks.defaultFolder() },
     ],
     okLabel: 'Create folder',
   });
@@ -139,7 +141,7 @@ async function moveItem(src, destFolder) {
 async function moveDialog(path, kind) {
   const r = await appDialog({
     title: kind === 'folder' ? 'Move folder' : 'Move doc',
-    fields: [{ name: 'folder', label: 'Move to', type: 'select', value: parentOf(path),
+    fields: [{ name: 'folder', label: 'Move to', type: 'folder', value: parentOf(path),
                options: folderOptions(kind === 'folder' ? path : null) }],
     okLabel: 'Move',
   });
@@ -205,31 +207,49 @@ async function deleteFolder(path) {
   catch (err) { toast(err.message); }
 }
 
-function docMenu(anchor, path) {
-  showMenu(anchor, [
-    { label: 'Open in editor', action: () => { location.href = editorUrl(path); } },
-    { label: 'View on site', action: () => window.open('/docs/' + path, '_blank') },
-    'sep',
-    { label: 'Rename', action: () => renameDoc(path) },
-    { label: 'Move to…', action: () => moveDialog(path, 'doc') },
-    'sep',
-    { label: 'Delete', danger: true, action: () => deleteDoc(path) },
-  ]);
+const siteUrl = path => location.origin + '/docs/' + path.split('/').map(encodeURIComponent).join('/');
+
+async function copyLink(path) {
+  try { await navigator.clipboard.writeText(siteUrl(path)); toast('Link copied'); }
+  catch { await askText('Copy this link', siteUrl(path), { okLabel: 'Done' }); }
 }
 
-function folderMenu(anchor, path) {
+function docMenu(anchor, path, at) {
+  const isOpen = docHooks.active() === path;
+  showMenu(anchor, [
+    { label: isOpen ? 'Open (already open)' : 'Open in editor', icon: 'edit', disabled: isOpen, action: () => docHooks.open(path) },
+    { label: 'View on site', icon: 'external', action: () => window.open('/docs/' + path, '_blank') },
+    { label: 'Copy link', icon: 'link', action: () => copyLink(path) },
+    'sep',
+    { label: 'Rename…', icon: 'edit', action: () => renameDoc(path) },
+    { label: 'Move to…', icon: 'move', action: () => moveDialog(path, 'doc') },
+    { label: 'New doc next to this', icon: 'docPlus', action: () => newDoc(parentOf(path)) },
+    'sep',
+    { label: 'Delete', icon: 'trash', danger: true, action: () => deleteDoc(path) },
+  ], at);
+}
+
+function folderMenu(anchor, path, at) {
   const item = findItem(path);
   const empty = !item || !item.children.length;
   showMenu(anchor, [
-    { label: 'New doc in this folder', action: () => newDoc(path) },
-    { label: 'New folder inside', action: () => newFolder(path) },
+    { label: 'New doc here', icon: 'docPlus', action: () => newDoc(path) },
+    { label: 'New folder here', icon: 'folderPlus', action: () => newFolder(path) },
     'sep',
-    { label: 'Rename', action: () => renameFolder(path) },
-    { label: 'Move to…', action: () => moveDialog(path, 'folder') },
+    { label: 'Rename…', icon: 'edit', action: () => renameFolder(path) },
+    { label: 'Move to…', icon: 'move', action: () => moveDialog(path, 'folder') },
     'sep',
-    { label: 'Delete folder', danger: true, disabled: !empty,
+    { label: 'Delete folder', icon: 'trash', danger: true, disabled: !empty,
       hint: empty ? '' : 'Move or delete what’s inside first', action: () => deleteFolder(path) },
-  ]);
+  ], at);
+}
+
+/** "New" button, or right-click on empty space. `folder` undefined = the dialog picks a sensible default. */
+function newMenu(anchor, at = null, folder) {
+  showMenu(anchor, [
+    { label: 'New doc', icon: 'docPlus', action: () => newDoc(folder) },
+    { label: 'New folder', icon: 'folderPlus', action: () => newFolder(folder) },
+  ], at);
 }
 
 /** Attach "⋯" menus, empty-folder hints and drag & drop to a tree container. */
@@ -238,12 +258,25 @@ function setupTree(el) {
 
   el.addEventListener('click', e => {
     const more = e.target.closest('[data-more]');
+    const add = e.target.closest('[data-add]');
     const newIn = e.target.closest('[data-new-in]');
-    if (!more && !newIn) return;
+    if (!more && !add && !newIn) return;
     e.preventDefault(); e.stopPropagation();
     if (newIn) return newDoc(newIn.dataset.newIn);
-    const row = more.closest('.row');
+    const row = (more || add).closest('.row');
+    if (add) return newDoc(row.dataset.folder);
     row.dataset.folder !== undefined ? folderMenu(more, row.dataset.folder) : docMenu(more, row.dataset.path);
+  });
+
+  // Right-click anywhere in the tree for the app's own menu instead of the browser's.
+  el.addEventListener('contextmenu', e => {
+    if (e.shiftKey) return;  // Shift+right-click still gets the browser menu
+    e.preventDefault();
+    const row = e.target.closest('.row');
+    // Opened from the keyboard (menu key): put it under the row rather than at 0,0.
+    const at = e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null;
+    if (!row) return newMenu(el, at, '');
+    row.dataset.folder !== undefined ? folderMenu(row, row.dataset.folder, at) : docMenu(row, row.dataset.path, at);
   });
 
   // Drag a doc or folder onto a folder to move it; drop on empty space for top level.
@@ -290,9 +323,10 @@ function setupTree(el) {
 
 // ---------- uploads ----------
 
-async function uploadFile(file) {
+async function uploadFile(file, folder = '') {
   const fd = new FormData();
   fd.append('file', file, file.name || 'pasted.png');
+  fd.append('folder', folder);
   return api('/admin/api/uploads', { method: 'POST', body: fd });
 }
 
@@ -302,97 +336,315 @@ const markdownFor = it => it.is_image ? `![${altText(it.name)}](${it.url})` : `[
 const usedCount = it => it.used_in.length + (it.on_home ? 1 : 0);
 const formatSize = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
+// Upload folders are labels on the server (see main.py), so moving a file never changes its URL.
+const ALL = null;  // "All uploads" view; '' is the "Unsorted" view (files in no folder)
+
+/** Sort folder paths so each folder comes right after its parent. */
+const byFolderPath = (a, b) => {
+  const pa = a.split('/'), pb = b.split('/');
+  for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+    const c = pa[i].localeCompare(pb[i], undefined, { sensitivity: 'base', numeric: true });
+    if (c) return c;
+  }
+  return pa.length - pb.length;
+};
+
+function uploadFolderOptions(folders, exclude = null) {
+  return [{ value: '', label: 'Unsorted', icon: 'library' },
+    ...folders.filter(f => !exclude || (f !== exclude && !f.startsWith(exclude + '/')))
+      .map(f => ({ value: f, label: baseName(f), depth: f.split('/').length }))];
+}
+
 /**
- * Uploads library grid.
- *   grid, search: elements
+ * Uploads library: a folder list beside a grid of files.
+ *   grid, search, folderNav: elements
  *   onInsert(item): if given, cards get an "Insert" button and clicking a thumbnail inserts
- *   dropZone: element that accepts dropped files
+ *   dropZone: element that accepts dropped files (uploaded into the open folder)
  *   onRename(oldUrl, newUrl, result): a file was renamed (docs on disk are already updated)
  *   onLoad(items): called after the list loads
+ *   storageKey: remembers the open folder between visits
  */
-function createLibrary({ grid, search, onInsert = null, dropZone = null, docLink = editorUrl, onLoad = () => { }, onRename = () => { } }) {
-  let items = [];
+function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = null, docLink = editorUrl,
+                         onLoad = () => { }, onRename = () => { }, storageKey = 'mydocs.uploadFolder' }) {
+  let items = [], folders = [];
+  let cur = (() => { try { const v = localStorage.getItem(storageKey); return v === null ? ALL : JSON.parse(v); } catch { return ALL; } })();
+  const setCur = f => { cur = f; try { localStorage.setItem(storageKey, JSON.stringify(f)); } catch { } render(); };
+  const uploadTarget = () => cur ?? '';
 
   async function load() {
-    try { items = await api('/admin/api/uploads'); render(); onLoad(items); }
-    catch (err) { toast(err.message); }
+    try {
+      const res = await api('/admin/api/uploads');
+      items = res.files; folders = res.folders.sort(byFolderPath);
+      if (cur && !folders.includes(cur)) cur = ALL;
+      render(); onLoad(items);
+    } catch (err) { toast(err.message); }
   }
 
+  // ---------- folder list ----------
+  function renderFolders() {
+    if (!folderNav) return;
+    const count = f => items.filter(it => it.folder === f).length;
+    const row = (value, label, ico, depth, n) => `<button class="lib-folder ${value === cur ? 'active' : ''}"
+        data-folder="${escapeHtml(JSON.stringify(value))}" style="--depth:${depth}" title="${escapeHtml(label)}">
+        ${icon(ico)}<span class="label-text">${escapeHtml(label)}</span><span class="count">${n || ''}</span></button>`;
+    folderNav.innerHTML =
+      row(ALL, 'All uploads', 'library', 0, items.length) +
+      row('', 'Unsorted', 'image', 0, count('')) +
+      `<div class="lib-folders-head"><span>Folders</span>
+        <button class="icon-btn" data-new-folder title="New folder" aria-label="New folder">${icon('folderPlus')}</button></div>` +
+      (folders.length
+        ? folders.map(f => row(f, baseName(f), 'folder', f.split('/').length - 1, count(f))).join('')
+        : '<div class="lib-folders-empty">No folders yet. Right-click here or use + to make one.</div>');
+  }
+  const folderOf = el => { const b = el.closest('[data-folder]'); return b ? JSON.parse(b.dataset.folder) : undefined; };
+
+  // ---------- grid ----------
   function render() {
+    renderFolders();
     const q = search.value.trim().toLowerCase();
-    const shown = items.filter(it => it.name.toLowerCase().includes(q));
+    // Searching looks through every folder; otherwise show the open folder.
+    const shown = items.filter(it => q ? it.name.toLowerCase().includes(q) : cur === ALL || it.folder === cur);
     if (!shown.length) {
-      grid.innerHTML = `<div class="lib-empty">${items.length ? 'No matches.' : 'Nothing uploaded yet. Paste or drop an image into a doc, or click Upload.'}</div>`;
+      grid.innerHTML = `<div class="lib-empty">${
+        q ? 'No matches.'
+        : !items.length ? 'Nothing uploaded yet. Paste or drop an image into a doc, or click Upload.'
+        : cur === '' ? 'Everything is filed away in folders.'
+        : 'This folder is empty.<br>Drag uploads onto it in the list, or drop files here to upload them into it.'}</div>`;
       return;
     }
+    const showFolder = q || cur === ALL;
     grid.innerHTML = shown.map(it => {
       const used = usedCount(it);
-      return `<div class="lib-card" data-name="${escapeHtml(it.name)}">
-        <button class="lib-thumb" data-act="${onInsert ? 'insert' : 'open'}" title="${onInsert ? 'Insert into doc' : 'Open file'}">
-          ${it.is_image ? `<img src="${escapeHtml(it.url)}" alt="" loading="lazy">` : escapeHtml(it.name.split('.').pop().toUpperCase())}
+      return `<div class="lib-card" data-name="${escapeHtml(it.name)}" draggable="true">
+        <button class="lib-thumb" data-act="${onInsert ? 'insert' : 'open'}" title="${onInsert ? 'Insert into doc' : 'Open file'}" draggable="false">
+          ${it.is_image ? `<img src="${escapeHtml(it.url)}" alt="" loading="lazy" draggable="false">` : escapeHtml(it.name.split('.').pop().toUpperCase())}
         </button>
         <div class="lib-info">
           <div class="lib-name" title="${escapeHtml(displayName(it.name))}">${escapeHtml(displayName(it.name))}</div>
           <div class="lib-meta ${used ? '' : 'unused'}">${formatSize(it.size)} · ${used ? `used in ${used} place${used > 1 ? 's' : ''}` : 'not used'}</div>
+          ${showFolder && it.folder ? `<div class="lib-in">${icon('folder')}${escapeHtml(it.folder)}</div>` : ''}
           <div class="lib-used">${it.on_home ? '<a href="/admin/#home">Home page</a>' : ''}${it.used_in.map(p => `<a href="${escapeHtml(docLink(p))}">${escapeHtml(p)}</a>`).join('')}</div>
         </div>
         <div class="lib-actions">
-          ${onInsert ? '<button class="insert primary" data-act="insert">Insert</button>' : ''}
-          <button data-act="copy" title="Copy markdown">${icon('copy')}Copy</button>
-          <button data-act="rename" class="icon-btn" title="Rename file" aria-label="Rename">${icon('edit')}</button>
-          <button data-act="delete" class="danger icon-btn" title="Delete file" aria-label="Delete">${icon('trash')}</button>
+          ${onInsert ? '<button class="insert primary" data-act="insert">Insert</button>'
+                     : `<button class="insert" data-act="copy" title="Copy markdown">${icon('copy')}Copy</button>`}
+          <button data-act="menu" class="icon-btn" title="More actions (or right-click)" aria-label="More actions">${icon('dots')}</button>
         </div>
       </div>`;
     }).join('');
   }
 
+  // ---------- file actions ----------
+  const itemFor = el => items.find(it => it.name === el.closest('.lib-card')?.dataset.name);
+
+  function fileMenu(item, anchor, at) {
+    showMenu(anchor, [
+      ...(onInsert ? [{ label: 'Insert into doc', icon: 'plus', action: () => onInsert(item) }] : []),
+      { label: 'Copy markdown', icon: 'copy', action: () => copyMarkdown(item) },
+      { label: 'Open file', icon: 'external', action: () => window.open(item.url, '_blank') },
+      'sep',
+      { label: 'Rename…', icon: 'edit', action: () => renameFile(item) },
+      { label: 'Move to folder…', icon: 'move', action: () => moveFile(item) },
+      'sep',
+      { label: 'Delete', icon: 'trash', danger: true, action: () => deleteFile(item) },
+    ], at);
+  }
+
+  async function copyMarkdown(item) {
+    try { await navigator.clipboard.writeText(markdownFor(item)); toast('Copied. Paste it into any doc.'); }
+    catch { await askText('Copy this markdown', markdownFor(item), { okLabel: 'Done' }); }
+  }
+
+  async function renameFile(item) {
+    const used = usedCount(item);
+    const vals = await appDialog({
+      title: 'Rename file',
+      message: used ? `Links in ${used} place${used > 1 ? 's' : ''} will be updated automatically.` : '',
+      fields: [{ name: 'name', label: 'Name', value: altText(item.name) }],
+      okLabel: 'Rename',
+    });
+    const name = vals?.name?.trim();
+    if (!name || name === altText(item.name)) return;
+    try {
+      const res = await api('/admin/api/uploads/' + encodeURIComponent(item.name) + '/rename', jsonOpts('POST', { name }));
+      onRename(item.url, res.url, res);
+      toast(res.docs.length ? `Renamed. Updated ${res.docs.length} doc${res.docs.length > 1 ? 's' : ''}.` : 'Renamed.');
+      await load();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function moveFiles(names, folder) {
+    try {
+      await api('/admin/api/uploads/move', jsonOpts('POST', { names, folder }));
+      toast(`Moved to ${folder ? baseName(folder) : 'Unsorted'}`);
+      await load();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function moveFile(item) {
+    const r = await appDialog({
+      title: `Move ${displayName(item.name)}`,
+      message: 'Links to it keep working. Folders only organize your uploads.',
+      fields: [{ name: 'folder', label: 'Move to', type: 'folder', value: item.folder, options: uploadFolderOptions(folders) }],
+      okLabel: 'Move',
+    });
+    if (r && r.folder !== item.folder) await moveFiles([item.name], r.folder);
+  }
+
+  async function deleteFile(item) {
+    const places = [...(item.on_home ? ['the home page'] : []), ...item.used_in];
+    const msg = places.length
+      ? `It's used in: ${places.join(', ')}. Those pages will show a broken image.`
+      : 'No docs use this file.';
+    if (!await askConfirm(`Delete ${displayName(item.name)}?`, msg, { okLabel: 'Delete', danger: true })) return;
+    try { await api('/admin/api/uploads/' + encodeURIComponent(item.name), { method: 'DELETE' }); await load(); }
+    catch (err) { toast(err.message); }
+  }
+
   grid.addEventListener('click', async e => {
     const el = e.target.closest('[data-act]'); if (!el) return;
-    const item = items.find(it => it.name === el.closest('.lib-card').dataset.name);
+    const item = itemFor(el); if (!item) return;
     const act = el.dataset.act;
     if (act === 'open') window.open(item.url, '_blank');
     if (act === 'insert') onInsert(item);
-    if (act === 'copy') {
-      try { await navigator.clipboard.writeText(markdownFor(item)); toast('Copied. Paste it into any doc.'); }
-      catch { await askText('Copy this markdown', markdownFor(item), { okLabel: 'Done' }); }
-    }
-    if (act === 'rename') {
-      const used = usedCount(item);
-      const vals = await appDialog({
-        title: 'Rename file',
-        message: used ? `Links in ${used} place${used > 1 ? 's' : ''} will be updated automatically.` : '',
-        fields: [{ name: 'name', label: 'Name', value: altText(item.name) }],
-        okLabel: 'Rename',
-      });
-      const name = vals?.name?.trim();
-      if (!name || name === altText(item.name)) return;
-      try {
-        const res = await api('/admin/api/uploads/' + encodeURIComponent(item.name) + '/rename', jsonOpts('POST', { name }));
-        onRename(item.url, res.url, res);
-        toast(res.docs.length ? `Renamed. Updated ${res.docs.length} doc${res.docs.length > 1 ? 's' : ''}.` : 'Renamed.');
-        await load();
-      } catch (err) { toast(err.message); }
-    }
-    if (act === 'delete') {
-      const places = [...(item.on_home ? ['the home page'] : []), ...item.used_in];
-      const msg = places.length
-        ? `It's used in: ${places.join(', ')}. Those pages will show a broken image.`
-        : 'No docs use this file.';
-      if (!await askConfirm(`Delete ${displayName(item.name)}?`, msg, { okLabel: 'Delete', danger: true })) return;
-      try { await api('/admin/api/uploads/' + encodeURIComponent(item.name), { method: 'DELETE' }); await load(); }
-      catch (err) { toast(err.message); }
-    }
+    if (act === 'copy') copyMarkdown(item);
+    if (act === 'menu') fileMenu(item, el);
   });
+  grid.addEventListener('contextmenu', e => {
+    const item = itemFor(e.target);
+    if (!item || e.shiftKey) return;
+    e.preventDefault();
+    fileMenu(item, e.target.closest('.lib-card'), e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null);
+  });
+
+  // ---------- folder actions ----------
+  async function newFolder(parent = uploadTarget()) {
+    const r = await appDialog({
+      title: 'New folder',
+      fields: [
+        { name: 'name', label: 'Name', placeholder: 'e.g. Screenshots' },
+        { name: 'parent', label: 'Inside', type: 'folder', value: parent,
+          options: uploadFolderOptions(folders).map(o => o.value ? o : { ...o, label: 'Top level', icon: 'home' }) },
+      ],
+      okLabel: 'Create folder',
+    });
+    const name = r && cleanFolderName(r.name);
+    if (!name) return;
+    try {
+      const res = await api('/admin/api/upload-folders', jsonOpts('POST', { path: join(r.parent, name) }));
+      folders.push(res.path); setCur(res.path);
+      await load();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function renameFolder(path) {
+    const r = await appDialog({ title: 'Rename folder', fields: [{ name: 'name', label: 'Name', value: baseName(path) }], okLabel: 'Rename' });
+    const name = r && cleanFolderName(r.name);
+    if (!name || name === baseName(path)) return;
+    await moveFolder(path, join(parentOf(path), name));
+  }
+
+  async function moveFolder(src, dst) {
+    if (src === dst) return;
+    try {
+      const res = await api('/admin/api/upload-folders/move', jsonOpts('POST', { src, dst }));
+      if (cur === src || cur?.startsWith(src + '/')) cur = res.path + cur.slice(src.length);
+      await load();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function moveFolderDialog(path) {
+    const r = await appDialog({
+      title: `Move folder ${baseName(path)}`,
+      fields: [{ name: 'parent', label: 'Move into', type: 'folder', value: parentOf(path),
+                 options: uploadFolderOptions(folders, path).map(o => o.value ? o : { ...o, label: 'Top level', icon: 'home' }) }],
+      okLabel: 'Move',
+    });
+    if (r) await moveFolder(path, join(r.parent, baseName(path)));
+  }
+
+  async function deleteFolder(path) {
+    const n = items.filter(it => it.folder === path || it.folder.startsWith(path + '/')).length;
+    const dest = parentOf(path) ? `“${baseName(parentOf(path))}”` : 'Unsorted';
+    const msg = n ? `Its ${n} file${n > 1 ? 's' : ''} and any subfolders move to ${dest}. No files are deleted.` : 'It’s empty.';
+    if (!await askConfirm(`Remove folder “${baseName(path)}”?`, msg, { okLabel: 'Remove folder', danger: true })) return;
+    try {
+      await api('/admin/api/upload-folders/delete', jsonOpts('POST', { path }));
+      if (cur === path) cur = parentOf(path) || ALL;
+      await load();
+    } catch (err) { toast(err.message); }
+  }
+
+  function folderMenu(path, anchor, at) {
+    if (path === ALL || path === '') {
+      return showMenu(anchor, [{ label: 'New folder', icon: 'folderPlus', action: () => newFolder('') }], at);
+    }
+    showMenu(anchor, [
+      { label: 'New folder inside', icon: 'folderPlus', action: () => newFolder(path) },
+      'sep',
+      { label: 'Rename…', icon: 'edit', action: () => renameFolder(path) },
+      { label: 'Move to…', icon: 'move', action: () => moveFolderDialog(path) },
+      'sep',
+      { label: 'Remove folder', icon: 'trash', danger: true, hint: 'Files inside are kept', action: () => deleteFolder(path) },
+    ], at);
+  }
+
+  if (folderNav) {
+    folderNav.addEventListener('click', e => {
+      if (e.target.closest('[data-new-folder]')) return newFolder();
+      const f = folderOf(e.target);
+      if (f !== undefined) { search.value = ''; setCur(f); }
+    });
+    folderNav.addEventListener('contextmenu', e => {
+      if (e.shiftKey) return;
+      e.preventDefault();
+      const f = folderOf(e.target);
+      const at = e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null;
+      folderMenu(f === undefined ? '' : f, e.target.closest('[data-folder]') || folderNav, at);
+    });
+
+    // Drag cards onto a folder to file them; drop files from your computer onto a folder to upload there.
+    const target = e => { const f = folderOf(e.target); return f === undefined || f === ALL ? undefined : f; };
+    const clear = () => folderNav.querySelectorAll('.drop-target').forEach(n => n.classList.remove('drop-target'));
+    folderNav.addEventListener('dragover', e => {
+      const f = target(e);
+      clear();
+      if (f === undefined) return;
+      if (!e.dataTransfer.types.includes('application/x-mydocs-upload') && !e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault(); e.stopPropagation();
+      e.target.closest('[data-folder]').classList.add('drop-target');
+    });
+    folderNav.addEventListener('dragleave', e => { if (!folderNav.contains(e.relatedTarget)) clear(); });
+    folderNav.addEventListener('drop', e => {
+      const f = target(e);
+      clear();
+      if (f === undefined) return;
+      e.preventDefault(); e.stopPropagation();
+      dropZone?.classList.remove('drag-over');
+      const name = e.dataTransfer.getData('application/x-mydocs-upload');
+      if (name) { if (items.find(it => it.name === name)?.folder !== f) moveFiles([name], f); }
+      else if (e.dataTransfer.files.length) upload([...e.dataTransfer.files], f);
+    });
+  }
+  grid.addEventListener('dragstart', e => {
+    const card = e.target.closest('.lib-card'); if (!card) return;
+    e.dataTransfer.setData('application/x-mydocs-upload', card.dataset.name);
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+  grid.addEventListener('dragend', () => grid.querySelectorAll('.dragging').forEach(n => n.classList.remove('dragging')));
+
   search.addEventListener('input', render);
 
-  async function upload(files) {
+  async function upload(files, folder = uploadTarget()) {
     for (const f of files) {
-      try { await uploadFile(f); } catch (err) { toast(`Upload failed: ${err.message}`); }
+      try { await uploadFile(f, folder); } catch (err) { toast(`Upload failed: ${err.message}`); }
     }
     await load();
   }
 
   if (dropZone) {
+    // Only files from the computer; dragging a card around shouldn't light this up.
     dropZone.addEventListener('dragover', e => {
       if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); dropZone.classList.add('drag-over'); }
     });
@@ -404,5 +656,5 @@ function createLibrary({ grid, search, onInsert = null, dropZone = null, docLink
     });
   }
 
-  return { load, render, upload };
+  return { load, render, upload, newFolder };
 }

@@ -28,6 +28,24 @@ renderer.code = function (a, b) {
     : escapeHtml(text);
   return `<pre><code class="hljs language-${escapeHtml(lang)}">${html}</code></pre>`;
 };
+// Image size goes after a "|" in the alt text: ![Diagram|50%](/uploads/x.png) or ![Logo|120](...) for pixels.
+const IMG_SIZE_RE = /\|\s*(\d{1,4})\s*(%|px)?\s*$/;
+function splitImageSize(alt) {
+  const m = alt.match(IMG_SIZE_RE);
+  if (!m) return { alt, width: '' };
+  const n = Number(m[1]), pct = m[2] === '%';
+  return { alt: alt.slice(0, m.index).trimEnd(), width: pct ? Math.min(n, 100) + '%' : n + 'px' };
+}
+const unescapeHtml = s => String(s).replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[e]));
+renderer.image = function (a, b, c) {
+  // marked passes (href, title, text) in older versions and a token object in newer ones.
+  const tok = typeof a === 'object' ? a : { href: a, title: b, text: c };
+  const { alt, width } = splitImageSize(unescapeHtml(tok.text || ''));
+  let src;
+  try { src = encodeURI(tok.href || '').replace(/%25/g, '%'); } catch { return escapeHtml(alt); }
+  return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"` +
+    (tok.title ? ` title="${escapeHtml(tok.title)}"` : '') + (width ? ` style="width:${width}"` : '') + '>';
+};
 marked.setOptions({ renderer, gfm: true, breaks: false });
 
 mermaid.initialize({ startOnLoad: false, theme: isDark() ? 'dark' : 'default', securityLevel: 'strict' });
@@ -107,6 +125,11 @@ const ICON_PATHS = {
   copy: '<rect x="5" y="5" width="8.5" height="8.5" rx="1.3"/><path d="M11 5V3.3c0-.5-.4-.8-.8-.8H3.3c-.5 0-.8.4-.8.8v6.9c0 .4.4.8.8.8H5"/>',
   trash: '<path d="M2.5 4.5h11M6 4.5V2.8h4v1.7M4 4.5l.7 9h6.6l.7-9"/>',
   home: '<path d="M2.5 7.3L8 2.8l5.5 4.5M4 6.2v7.3h3V10h2v3.5h3V6.2"/>',
+  folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
+  check: '<path d="M3 8.5l3.2 3L13 4.5"/>',
+  docPlus: '<path d="M4 1.8h5l3.2 3.2v4M9 1.8V5h3.2M4 1.8v12.4h5M12 11v4M10 13h4"/>',
+  move: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5zM6 8.7h4M8.5 7l1.6 1.7-1.6 1.7"/>',
+  open: '<path d="M4 1.8h5l3.2 3.2v9.2H4zM9 1.8V5h3.2"/>',
   eye: '<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
   dots: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
 };
@@ -135,7 +158,8 @@ const hasDocs = item => item.type === 'doc' || item.children.some(hasDocs);
  * opts.editable   -> admin mode: "⋯" menus, drag & drop, empty-folder hints
  */
 function renderTree(container, tree, opts) {
-  const moreBtn = '<button class="more" data-more title="Actions" aria-label="Actions">' + ICONS.dots + '</button>';
+  const moreBtn = '<button class="more" data-more title="More actions (or right-click)" aria-label="More actions">' + ICONS.dots + '</button>';
+  const addBtn = '<button class="more" data-add title="New doc in this folder" aria-label="New doc in this folder">' + icon('plus') + '</button>';
   const build = (items) => {
     const ul = document.createElement('ul');
     for (const item of items) {
@@ -153,7 +177,7 @@ function renderTree(container, tree, opts) {
         summary.dataset.folder = item.path;
         if (opts.editable) summary.draggable = true;
         summary.innerHTML = ICONS.chevron + ICONS.folder +
-          `<span class="label-text">${escapeHtml(prettyName(item.name))}</span>` + (opts.editable ? moreBtn : '');
+          `<span class="label-text">${escapeHtml(prettyName(item.name))}</span>` + (opts.editable ? addBtn + moreBtn : '');
         const children = build(item.children);
         if (opts.editable && !item.children.length) {
           children.innerHTML = `<li class="empty-hint">Empty — <button data-new-in="${escapeHtml(item.path)}">add a doc</button></li>`;
@@ -183,22 +207,55 @@ function setActive(container, path) {
 
 // ---------- in-app dialogs (instead of the browser's prompt/confirm) ----------
 
+/** A folder list to pick from (in-app, instead of the browser's dropdown). options: [{value, label, depth, icon}] */
+function folderPickerHtml(f) {
+  return `<div class="folder-pick" role="listbox" tabindex="0" aria-label="${escapeHtml(f.label || 'Folder')}">` +
+    f.options.map(o => `<button type="button" role="option" tabindex="-1" data-value="${escapeHtml(o.value)}" style="--depth:${o.depth || 0}">` +
+      `${icon(o.icon || 'folder')}<span class="label-text">${escapeHtml(o.label)}</span>${icon('check')}</button>`).join('') +
+    `</div><input type="hidden" name="${f.name}">`;
+}
+
+function setupFolderPicker(list, input, onChoose) {
+  const opts = () => [...list.querySelectorAll('[role=option]')];
+  const select = (btn, scroll = true) => {
+    if (!btn) return;
+    input.value = btn.dataset.value;
+    opts().forEach(o => o.setAttribute('aria-selected', o === btn));
+    if (scroll) btn.scrollIntoView({ block: 'nearest' });
+  };
+  select(opts().find(o => o.dataset.value === input.value) || opts()[0]);
+  list.addEventListener('click', e => select(e.target.closest('[role=option]'), false));
+  list.addEventListener('dblclick', e => { if (e.target.closest('[role=option]')) onChoose(); });
+  list.addEventListener('keydown', e => {
+    const all = opts(), i = all.findIndex(o => o.dataset.value === input.value);
+    if (e.key === 'ArrowDown') { e.preventDefault(); select(all[Math.min(i + 1, all.length - 1)]); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); select(all[Math.max(i - 1, 0)]); }
+    else if (e.key === 'Home') { e.preventDefault(); select(all[0]); }
+    else if (e.key === 'End') { e.preventDefault(); select(all[all.length - 1]); }
+  });
+}
+
 /**
  * Show a dialog. With `fields` it resolves to {name: value} (or null if cancelled);
  * without, it resolves to true/false.
- * field: { name, label, value, type: 'text' | 'select', options: [{value, label}], placeholder, hint }
+ * field: { name, label, value, type: 'text' | 'folder', options: [{value, label, depth, icon}], placeholder, hint }
  */
 function appDialog({ title, message = '', fields = null, okLabel = 'OK', danger = false }) {
   return new Promise(resolve => {
     const dlg = document.createElement('dialog');
     dlg.className = 'app-dialog';
-    const fieldHtml = (fields || []).map(f => `<label class="field">
-        ${f.label ? `<span>${escapeHtml(f.label)}</span>` : ''}
-        ${f.type === 'select'
-          ? `<select name="${f.name}">${f.options.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}</select>`
-          : `<input name="${f.name}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(f.placeholder || '')}">`}
-        ${f.hint ? `<small>${escapeHtml(f.hint)}</small>` : ''}
-      </label>`).join('');
+    // A folder list holds several buttons, so it can't sit inside a <label>.
+    const fieldHtml = (fields || []).map(f => f.type === 'folder'
+      ? `<div class="field">
+          ${f.label ? `<span>${escapeHtml(f.label)}</span>` : ''}
+          ${folderPickerHtml(f)}
+          ${f.hint ? `<small>${escapeHtml(f.hint)}</small>` : ''}
+        </div>`
+      : `<label class="field">
+          ${f.label ? `<span>${escapeHtml(f.label)}</span>` : ''}
+          <input name="${f.name}" autocomplete="off" spellcheck="false" placeholder="${escapeHtml(f.placeholder || '')}">
+          ${f.hint ? `<small>${escapeHtml(f.hint)}</small>` : ''}
+        </label>`).join('');
     dlg.innerHTML = `<form method="dialog">
       <h3>${escapeHtml(title)}</h3>
       ${message ? `<p>${escapeHtml(message)}</p>` : ''}
@@ -209,6 +266,8 @@ function appDialog({ title, message = '', fields = null, okLabel = 'OK', danger 
       </div>
     </form>`;
     for (const f of fields || []) dlg.querySelector(`[name="${f.name}"]`).value = f.value ?? '';
+    dlg.querySelectorAll('.folder-pick').forEach(list =>
+      setupFolderPicker(list, list.nextElementSibling, () => dlg.close('ok')));
     dlg.querySelector('[data-cancel]').onclick = () => dlg.close('cancel');
     dlg.addEventListener('close', () => {
       const ok = dlg.returnValue === 'ok';
@@ -219,7 +278,7 @@ function appDialog({ title, message = '', fields = null, okLabel = 'OK', danger 
     });
     document.body.append(dlg);
     dlg.showModal();
-    const first = dlg.querySelector('input, select');
+    const first = dlg.querySelector('input:not([type=hidden]), .folder-pick');
     if (first) { first.focus(); if (first.select) first.select(); }
   });
 }
@@ -229,34 +288,65 @@ const askConfirm = (title, message = '', opts = {}) => appDialog({ title, messag
 
 // ---------- popup menu ----------
 
-/** items: [{ label, action, danger, disabled, hint }] or 'sep' */
-function showMenu(anchor, items) {
-  document.querySelector('.popup-menu')?.remove();
+let closeOpenMenu = null, openMenuAnchor = null;
+
+/**
+ * items: [{ label, action, icon, danger, disabled, hint }] or 'sep'
+ * at: {x, y} opens the menu at the pointer (right-click) instead of under `anchor`.
+ */
+function showMenu(anchor, items, at = null) {
+  // Clicking the same button again closes its menu.
+  if (closeOpenMenu && openMenuAnchor === anchor && !at) { closeOpenMenu(); return; }
+  closeOpenMenu?.();
   const menu = document.createElement('div');
   menu.className = 'popup-menu';
   menu.setAttribute('role', 'menu');
   items.forEach(it => {
-    if (it === 'sep') { menu.append(Object.assign(document.createElement('hr'))); return; }
+    if (it === 'sep') { menu.append(document.createElement('hr')); return; }
     const b = document.createElement('button');
     b.setAttribute('role', 'menuitem');
     b.className = it.danger ? 'danger' : '';
     b.disabled = !!it.disabled;
-    b.innerHTML = escapeHtml(it.label) + (it.hint ? `<small>${escapeHtml(it.hint)}</small>` : '');
+    b.innerHTML = (it.icon ? icon(it.icon) : '<span class="ico"></span>') +
+      `<span class="menu-label">${escapeHtml(it.label)}${it.hint ? `<small>${escapeHtml(it.hint)}</small>` : ''}</span>`;
     b.onclick = () => { close(); it.action(); };
     menu.append(b);
   });
   document.body.append(menu);
   const r = anchor.getBoundingClientRect();
-  const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
-  const top = r.bottom + menu.offsetHeight + 8 > window.innerHeight ? r.top - menu.offsetHeight - 4 : r.bottom + 4;
-  Object.assign(menu.style, { left: Math.max(8, left) + 'px', top: top + 'px' });
-  anchor.classList.add('menu-open');
-  const onDown = e => { if (!menu.contains(e.target) && !anchor.contains(e.target)) close(); };
-  const onKey = e => { if (e.key === 'Escape') close(); };
-  function close() {
-    menu.remove(); anchor.classList.remove('menu-open');
-    document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey);
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  let left, top;
+  if (at) {
+    left = Math.min(at.x, window.innerWidth - w - 8);
+    top = at.y + h + 8 > window.innerHeight ? at.y - h : at.y;
+  } else {
+    left = Math.min(r.left, window.innerWidth - w - 8);
+    top = r.bottom + h + 8 > window.innerHeight ? r.top - h - 4 : r.bottom + 4;
   }
-  setTimeout(() => { document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey); });
-  menu.querySelector('button:not(:disabled)')?.focus();
+  Object.assign(menu.style, { left: Math.max(8, left) + 'px', top: Math.max(8, top) + 'px' });
+  anchor.classList.add('menu-open');
+
+  const buttons = () => [...menu.querySelectorAll('button:not(:disabled)')];
+  const onDown = e => { if (!menu.contains(e.target) && (at || !anchor.contains(e.target))) close(); };
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const bs = buttons(), i = bs.indexOf(document.activeElement);
+      bs[(i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length]?.focus();
+    }
+  };
+  function close() {
+    menu.remove(); anchor.classList.remove('menu-open'); closeOpenMenu = openMenuAnchor = null;
+    document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey);
+    window.removeEventListener('blur', close); window.removeEventListener('resize', close);
+    document.removeEventListener('scroll', close, true);
+  }
+  closeOpenMenu = close; openMenuAnchor = anchor;
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey);
+    window.addEventListener('blur', close); window.addEventListener('resize', close);
+    document.addEventListener('scroll', close, true);
+  });
+  buttons()[0]?.focus();
 }
