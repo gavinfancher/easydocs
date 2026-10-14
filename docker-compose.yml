@@ -1,0 +1,12 @@
+services:
+  mydocs:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MYDOCS_TITLE: "My Docs"
+      MYDOCS_USER: admin
+      MYDOCS_PASSWORD: ${MYDOCS_PASSWORD:?Set MYDOCS_PASSWORD in .env}
+    volumes:
+      - ./data:/data

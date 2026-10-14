@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor · Docs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <style>
+    .editor-wrap { display: flex; flex-direction: column; height: 100%; }
+    .doc-bar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+    }
+    .doc-path { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--text-soft); flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status { font-size: 13px; color: var(--text-soft); min-width: 60px; text-align: right; }
+    .status.dirty { color: #c98a00; }
+    .status.error { color: var(--danger); }
+    .tools { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg-soft); }
+    .tools button { height: 28px; font-size: 13px; padding: 0 9px; }
+    .tools .sep { width: 1px; background: var(--border); margin: 2px 4px; }
+    .panes { flex: 1; display: flex; min-height: 0; }
+    .panes > * { flex: 1; min-width: 0; overflow-y: auto; }
+    #editor {
+      border: none; resize: none; outline: none; padding: 24px 28px 80px;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2;
+    }
+    #preview-pane { border-left: 1px solid var(--border); }
+    #preview-pane .markdown { padding: 24px 32px 80px; }
+    body.drag-over #editor { outline: 3px dashed var(--accent); outline-offset: -10px; }
+    .placeholder { margin: auto; text-align: center; color: var(--text-soft); padding: 40px; }
+    .placeholder h2 { color: var(--text); font-weight: 600; }
+    body.preview-hidden #preview-pane { display: none; }
+    body.editor-hidden #editor { display: none; }
+    @media (max-width: 800px) {
+      body:not(.editor-hidden) #preview-pane { display: none; }
+      #preview-pane { border-left: none; }
+      #editor { padding: 16px; }
+    }
+
+    .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 10px 8px; }
+    .sidebar-head span { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-soft); }
+    .sidebar-head button { height: 28px; font-size: 13px; padding: 0 9px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="sidebar-toggle" data-icon="panel" aria-label="Toggle sidebar" title="Show / hide sidebar"></button>
+    <a href="/admin/edit" class="brand" id="brand">Docs <small>editor</small></a>
+    <div class="spacer"></div>
+    <a class="btn" href="/admin/" data-icon="back">Admin panel</a>
+    <a class="btn hide-mobile" href="/" target="_blank" data-icon="external">View site</a>
+  </header>
+  <div class="layout">
+    <nav class="sidebar">
+      <div class="sidebar-head">
+        <span>Docs</span>
+        <button id="new-doc" data-icon="plus" title="New doc">New</button>
+      </div>
+      <div id="tree" class="tree"></div>
+    </nav>
+    <main class="main" id="main">
+      <div class="editor-wrap" id="workspace" hidden>
+        <div class="doc-bar">
+          <span class="doc-path" id="doc-path"></span>
+          <span class="status" id="status"></span>
+          <button id="toggle-preview" data-icon="eye" title="Show / hide preview">Preview</button>
+          <a class="btn" id="view-link" target="_blank" data-icon="external" title="Open on site">View</a>
+          <button id="doc-more" class="icon-btn" title="More actions" aria-label="More actions"></button>
+          <button id="save" class="primary" title="Save (⌘/Ctrl+S)">Save</button>
+        </div>
+        <div class="tools">
+          <button id="link-btn" data-icon="link" title="Insert a link (⌘K)">Link</button>
+          <button id="image-btn" data-icon="image" title="Upload an image or file. You can also paste or drag one in.">Image</button>
+          <button id="library-btn" data-icon="library" title="Insert something you've already uploaded">From uploads</button>
+          <input type="file" id="file-input" multiple hidden>
+        </div>
+        <div class="panes">
+          <textarea id="editor" spellcheck="true" placeholder="Start writing… Paste or drop images right here."></textarea>
+          <div id="preview-pane"><article class="markdown" id="preview"></article></div>
+        </div>
+      </div>
+      <div class="placeholder" id="empty-state">
+        <h2>Pick a doc to edit</h2>
+        <p>Choose one from the sidebar, or click <b>New</b> to start one.</p>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="library" hidden>
+    <div class="modal" role="dialog" aria-label="Uploads">
+      <div class="modal-head">
+        <h2>Insert from uploads</h2>
+        <input class="search" id="lib-search" type="search" placeholder="Filter by name…" autocomplete="off">
+        <div class="spacer"></div>
+        <button id="lib-upload" data-icon="upload">Upload</button>
+        <button id="lib-close" class="icon-btn" data-icon="x" aria-label="Close"></button>
+        <input type="file" id="lib-file-input" multiple hidden>
+      </div>
+      <div class="modal-hint">Click an item to insert it at your cursor. Drop files here to upload them.</div>
+      <div class="lib-grid" id="lib-grid"></div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/vendor/highlight.min.js"></script>
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/common.js"></script>
+  <script src="/static/admin.js"></script>
+  <script>
+    const editor = $('editor'), preview = $('preview'), statusEl = $('status');
+    let current = null;       // path of the open doc
+    let savedContent = '';
+
+    $('doc-more').innerHTML = ICONS.dots;
+
+    const isDirty = () => current && editor.value !== savedContent;
+    function setStatus(text, cls = '') { statusEl.textContent = text; statusEl.className = 'status ' + cls; }
+    function updateDirty() { isDirty() ? setStatus('Unsaved', 'dirty') : setStatus('Saved'); }
+    const confirmDiscard = async () => !isDirty() || askConfirm('Discard unsaved changes?',
+      `Your edits to "${current}" haven't been saved.`, { okLabel: 'Discard', danger: true });
+
+    function showPath() {
+      $('doc-path').textContent = current;
+      $('view-link').href = '/docs/' + current;
+      history.replaceState(null, '', '#' + encodeURIComponent(current));
+    }
+    function closeDoc() {
+      current = null; savedContent = '';
+      $('workspace').hidden = true; $('empty-state').hidden = false;
+      history.replaceState(null, '', '/admin/edit');
+    }
+
+    // ---------- tree (shared logic in admin.js) ----------
+    Object.assign(docHooks, {
+      active: () => current,
+      href: p => '#' + encodeURIComponent(p),
+      defaultFolder: () => current ? parentOf(current) : '',
+      beforeChange: async path => {
+        if (isDirty() && (current === path || current.startsWith(path + '/'))) await save();
+      },
+      afterMove: (src, dst) => {
+        if (!current) return;
+        if (current === src) current = dst;
+        else if (current.startsWith(src + '/')) current = dst + current.slice(src.length);
+        else return;
+        showPath();
+      },
+      afterDelete: path => { if (current === path) closeDoc(); },
+      afterCreate: async path => {
+        if (!await confirmDiscard()) return;
+        current = null;
+        await openDoc(path);
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+      },
+      openContent: path => path === current ? editor.value : undefined,
+      contentReplaced: (path, content) => {
+        if (path !== current) return;
+        editor.value = savedContent = content; updateDirty(); schedulePreview(0);
+      },
+    });
+    setupTree($('tree'));
+    $('new-doc').onclick = () => newDoc();
+
+    // ---------- open / save ----------
+    async function openDoc(path) {
+      if (path === current) return;
+      try {
+        const doc = await api('/api/docs/' + path);
+        current = doc.path; savedContent = doc.content; editor.value = doc.content;
+        $('workspace').hidden = false; $('empty-state').hidden = true;
+        showPath();
+        document.title = `${doc.title} · Editor`;
+        setActive($('tree'), current);
+        updateDirty(); schedulePreview(0);
+        editor.focus(); editor.setSelectionRange(0, 0); editor.scrollTop = 0;
+        document.body.classList.remove('nav-open');
+      } catch (err) { toast(err.message); }
+    }
+
+    async function save() {
+      if (!current) return;
+      const content = editor.value;
+      setStatus('Saving…');
+      try {
+        const res = await api('/admin/api/docs/' + current, jsonOpts('PUT', { content }));
+        savedContent = content; updateDirty();
+        document.title = `${res.title} · Editor`;
+        const label = $('tree').querySelector(`.row[data-path="${CSS.escape(current)}"] .label-text`);
+        if (label) label.textContent = res.title;
+      } catch (err) { setStatus('Save failed', 'error'); toast(err.message); }
+    }
+
+    $('save').onclick = save;
+    $('doc-more').onclick = e => showMenu(e.currentTarget, [
+      { label: 'Rename', action: () => renameDoc(current) },
+      { label: 'Move to…', action: () => moveDialog(current, 'doc') },
+      'sep',
+      { label: 'Delete', danger: true, action: () => deleteDoc(current) },
+    ]);
+    $('toggle-preview').onclick = () => {
+      if (window.innerWidth <= 800) document.body.classList.toggle('editor-hidden');
+      else document.body.classList.toggle('preview-hidden');
+    };
+
+    window.addEventListener('hashchange', async () => {
+      const p = decodeURIComponent(location.hash.slice(1));
+      if (!p || p === current) return;
+      if (!await confirmDiscard()) { history.replaceState(null, '', '#' + encodeURIComponent(current)); return; }
+      openDoc(p);
+    });
+    window.addEventListener('beforeunload', e => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+    // ---------- live preview ----------
+    let previewTimer;
+    function schedulePreview(ms = 250) {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(() => renderMarkdown(editor.value, preview), ms);
+    }
+    editor.addEventListener('input', () => { updateDirty(); schedulePreview(); });
+
+    // ---------- text editing ----------
+    function insertText(text) {
+      editor.focus();
+      // execCommand keeps the browser's undo history working; fall back if unsupported.
+      if (!document.execCommand('insertText', false, text)) {
+        editor.setRangeText(text, editor.selectionStart, editor.selectionEnd, 'end');
+        editor.dispatchEvent(new Event('input'));
+      }
+    }
+    function wrap(marker, fallback = 'text') {
+      const { selectionStart: s, selectionEnd: e } = editor;
+      const sel = editor.value.slice(s, e) || fallback;
+      insertText(marker + sel + marker);
+      editor.setSelectionRange(s + marker.length, s + marker.length + sel.length);
+    }
+    async function insertLink() {
+      const { selectionStart: s, selectionEnd: e } = editor;
+      const label = editor.value.slice(s, e) || 'link text';
+      const url = await askText('Link to a URL, or a doc like /docs/guides/setup', 'https://', { okLabel: 'Insert link' });
+      if (!url) return;
+      editor.setSelectionRange(s, e);
+      insertText(`[${label}](${url})`);
+    }
+    $('link-btn').onclick = insertLink;
+
+    /** Images go on their own line so they don't run into the surrounding text. */
+    function ownLine(md) {
+      const before = editor.value.slice(0, editor.selectionStart);
+      const after = editor.value.slice(editor.selectionEnd);
+      const lead = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+      const trail = after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+      return lead + md + trail;
+    }
+
+    editor.addEventListener('keydown', e => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === 'b') { e.preventDefault(); wrap('**'); }
+      else if (mod && e.key === 'i') { e.preventDefault(); wrap('_'); }
+      else if (mod && e.key === 'k') { e.preventDefault(); insertLink(); }
+      else if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); insertText('  '); }
+    });
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
+    });
+
+    // ---------- uploads: paste, drag & drop, Image button ----------
+    async function uploadFiles(files) {
+      for (const file of files) {
+        const token = `![Uploading ${file.name || 'image'}…]()`;
+        insertText(ownLine(token));
+        try {
+          const res = await uploadFile(file);
+          replaceToken(token, res.is_image ? `![${res.name}](${res.url})` : `[${res.name}](${res.url})`);
+        } catch (err) {
+          replaceToken(token, '');
+          toast(`Upload failed: ${err.message}`);
+        }
+      }
+    }
+    function replaceToken(token, replacement) {
+      const i = editor.value.indexOf(token);
+      if (i === -1) return;
+      const caret = editor.selectionStart;
+      editor.setSelectionRange(i, i + token.length);
+      if (replacement) insertText(replacement);
+      else { editor.setRangeText('', i, i + token.length); editor.dispatchEvent(new Event('input')); }
+      const pos = caret > i ? caret + replacement.length - token.length : caret;
+      editor.setSelectionRange(pos, pos);
+    }
+
+    editor.addEventListener('paste', e => {
+      const files = [...(e.clipboardData?.files || [])];
+      if (files.length) { e.preventDefault(); uploadFiles(files); }
+    });
+    let dragDepth = 0;
+    editor.addEventListener('dragenter', e => { if (e.dataTransfer.types.includes('Files')) { dragDepth++; document.body.classList.add('drag-over'); } });
+    editor.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('drag-over'); } });
+    editor.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+    editor.addEventListener('drop', e => {
+      dragDepth = 0; document.body.classList.remove('drag-over');
+      const files = [...e.dataTransfer.files];
+      if (!files.length) return;
+      e.preventDefault();
+      uploadFiles(files);
+    });
+    $('image-btn').onclick = () => $('file-input').click();
+    $('file-input').onchange = e => { uploadFiles([...e.target.files]); e.target.value = ''; };
+
+    // ---------- "From uploads" picker ----------
+    const library = createLibrary({
+      grid: $('lib-grid'), search: $('lib-search'), dropZone: document.querySelector('#library .modal'),
+      docLink: p => '#' + encodeURIComponent(p),
+      onInsert: item => { closeLibrary(); insertText(item.is_image ? ownLine(markdownFor(item)) : markdownFor(item)); toast('Inserted ' + displayName(item.name)); },
+      // The server already rewrote saved docs; mirror that in the open (maybe unsaved) text.
+      onRename: (oldUrl, newUrl, res) => {
+        if (!current) return;
+        const swap = t => t.split(`[${res.old_stem}](${oldUrl})`).join(`[${res.new_stem}](${oldUrl})`).split(oldUrl).join(newUrl);
+        const dirty = editor.value !== savedContent;
+        savedContent = swap(savedContent);
+        if (editor.value.includes(oldUrl)) { editor.value = swap(editor.value); schedulePreview(0); }
+        if (!dirty) savedContent = editor.value;
+        updateDirty();
+      },
+    });
+    async function openLibrary() {
+      $('library').hidden = false; $('lib-search').value = ''; $('lib-search').focus();
+      await library.load();
+    }
+    function closeLibrary() { $('library').hidden = true; if (current) editor.focus(); }
+    $('library-btn').onclick = openLibrary;
+    $('lib-close').onclick = closeLibrary;
+    $('library').addEventListener('click', e => { if (e.target.id === 'library' || e.target.closest('.lib-used a')) closeLibrary(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('library').hidden && !document.querySelector('dialog[open], .popup-menu')) closeLibrary(); });
+    $('lib-upload').onclick = () => $('lib-file-input').click();
+    $('lib-file-input').onchange = e => { library.upload([...e.target.files]); e.target.value = ''; };
+
+    // ---------- start ----------
+    (async () => {
+      try { $('brand').firstChild.textContent = (await api('/api/config')).title + ' '; } catch { }
+      await refreshTree();
+      const p = decodeURIComponent(location.hash.slice(1));
+      if (p) openDoc(p);
+    })();
+  </script>
+</body>
+</html>

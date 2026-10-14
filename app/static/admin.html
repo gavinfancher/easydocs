@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Docs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    .admin-nav { width: 220px; }
+    .admin-nav a {
+      display: flex; align-items: center; gap: 9px; padding: 8px 10px; margin-bottom: 2px; border-radius: 6px;
+      color: var(--text); font-size: 14px; font-weight: 500;
+    }
+    .admin-nav a:hover { background: var(--bg-hover); text-decoration: none; }
+    .admin-nav a.active { background: var(--accent-soft); color: var(--accent); }
+    .admin-nav .count { margin-left: auto; font-size: 12px; color: var(--text-soft); }
+    .panel { max-width: 960px; margin: 0 auto; padding: 28px 32px 60px; }
+    .panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+    .panel-head h1 { font-size: 22px; margin: 0; flex: 1; }
+    .panel-sub { color: var(--text-soft); font-size: 14px; margin: 0 0 18px; }
+    .card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 8px; }
+    #tree { min-height: 120px; }
+    #tree .row a { cursor: pointer; }
+    .uploads-card { padding: 0; overflow: hidden; }
+    .uploads-card .lib-grid { min-height: 240px; }
+    .uploads-tools { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+    .uploads-tools .search { flex: 1; max-width: 320px; }
+    @media (max-width: 800px) {
+      .panel { padding: 20px 16px 40px; }
+      .admin-nav { width: 240px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="sidebar-toggle" data-icon="panel" aria-label="Toggle sidebar" title="Show / hide sidebar"></button>
+    <a href="/admin/" class="brand" id="brand">Docs <small>admin</small></a>
+    <div class="spacer"></div>
+    <a class="btn primary" href="/admin/edit" data-icon="edit">Open editor</a>
+    <a class="btn hide-mobile" href="/" target="_blank" data-icon="external">View site</a>
+    <button id="logout" data-icon="logout" title="Log out"><span class="hide-mobile">Log out</span></button>
+  </header>
+  <div class="layout">
+    <nav class="sidebar admin-nav">
+      <a href="#docs" data-tab="docs" data-icon="docs">Docs <span class="count" id="doc-count"></span></a>
+      <a href="#uploads" data-tab="uploads" data-icon="library">Uploads <span class="count" id="upload-count"></span></a>
+    </nav>
+    <main class="main">
+      <section class="panel" id="tab-docs">
+        <div class="panel-head">
+          <h1>Docs</h1>
+          <button id="new-folder" data-icon="folderPlus">New folder</button>
+          <button id="new-doc" class="primary" data-icon="plus">New doc</button>
+        </div>
+        <p class="panel-sub">Click a doc to edit it. Drag docs onto folders to organize them, or use the ⋯ menu.</p>
+        <div class="card"><div id="tree" class="tree"></div></div>
+      </section>
+
+      <section class="panel" id="tab-uploads" hidden>
+        <div class="panel-head">
+          <h1>Uploads</h1>
+        </div>
+        <p class="panel-sub">Every image and file you've added. Copy one into any doc, or clean up files nothing uses.</p>
+        <div class="card uploads-card" id="uploads-card">
+          <div class="uploads-tools">
+            <input class="search" id="lib-search" type="search" placeholder="Filter by name…" autocomplete="off">
+            <div class="spacer"></div>
+            <button id="lib-upload" class="primary" data-icon="upload">Upload</button>
+            <input type="file" id="lib-file-input" multiple hidden>
+          </div>
+          <div class="lib-grid" id="lib-grid"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/vendor/highlight.min.js"></script>
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/common.js"></script>
+  <script src="/static/admin.js"></script>
+  <script>
+    const countDocs = items => items.reduce((n, it) => n + (it.type === 'doc' ? 1 : countDocs(it.children)), 0);
+
+    docHooks.afterRefresh = () => { $('doc-count').textContent = countDocs(tree) || ''; };
+    setupTree($('tree'));
+
+    const library = createLibrary({
+      grid: $('lib-grid'), search: $('lib-search'), dropZone: $('uploads-card'),
+      onLoad: items => { $('upload-count').textContent = items.length || ''; },
+    });
+
+    function showTab() {
+      const tab = location.hash === '#uploads' ? 'uploads' : 'docs';
+      $('tab-docs').hidden = tab !== 'docs';
+      $('tab-uploads').hidden = tab !== 'uploads';
+      document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+      document.body.classList.remove('nav-open');
+      if (tab === 'uploads') library.load();
+    }
+    window.addEventListener('hashchange', showTab);
+
+    $('new-doc').onclick = () => newDoc();
+    $('new-folder').onclick = () => newFolder();
+    $('logout').onclick = logout;
+    $('lib-upload').onclick = () => $('lib-file-input').click();
+    $('lib-file-input').onchange = e => { library.upload([...e.target.files]); e.target.value = ''; };
+
+    (async () => {
+      try { $('brand').firstChild.textContent = (await api('/api/config')).title + ' '; } catch { }
+      await refreshTree();
+      showTab();
+      api('/admin/api/uploads').then(u => { $('upload-count').textContent = u.length || ''; }).catch(() => { });
+    })();
+  </script>
+</body>
+</html>

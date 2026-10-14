@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="sidebar-toggle" data-icon="panel" aria-label="Toggle sidebar" title="Show / hide sidebar"></button>
+    <a href="/" class="brand" id="brand">Docs</a>
+    <div class="spacer"></div>
+    <input class="search" id="search" type="search" placeholder="Search docs…" autocomplete="off">
+    <a class="btn" href="/admin/" title="Admin panel (login required)">Admin</a>
+  </header>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main class="main" id="main">
+      <article class="markdown" id="content"></article>
+    </main>
+  </div>
+
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
+  <script src="/static/vendor/highlight.min.js"></script>
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/common.js"></script>
+  <script>
+    const sidebar = document.getElementById('sidebar');
+    const content = document.getElementById('content');
+    const search = document.getElementById('search');
+    let tree = [];
+    let siteTitle = 'Docs';
+
+    const currentPath = () => decodeURIComponent(location.pathname.replace(/^\/docs\/?/, '').replace(/^\/$/, '')) || 'index';
+    const docHref = p => '/docs/' + p.split('/').map(encodeURIComponent).join('/');
+
+    function firstDoc(items) {
+      for (const it of items) {
+        if (it.type === 'doc') return it.path;
+        const d = firstDoc(it.children);
+        if (d) return d;
+      }
+      return null;
+    }
+
+    async function loadDoc(path, { push = false } = {}) {
+      document.body.classList.remove('nav-open');
+      if (push) history.pushState({}, '', docHref(path));
+      try {
+        const doc = await api('/api/docs/' + path);
+        await renderMarkdown(doc.content, content);
+        document.title = `${doc.title} · ${siteTitle}`;
+      } catch (e) {
+        const fallback = path === 'index' && firstDoc(tree);
+        if (fallback) return loadDoc(fallback);
+        content.innerHTML = tree.length
+          ? `<h1>Not found</h1><p>No doc at <code>${escapeHtml(path)}</code>.</p>`
+          : `<h1>No docs yet</h1><p>Head to the <a href="/admin/">editor</a> to write your first one.</p>`;
+        document.title = siteTitle;
+      }
+      setActive(sidebar, path);
+      const hash = decodeURIComponent(location.hash.slice(1));
+      const target = hash && document.getElementById(hash);
+      target ? target.scrollIntoView() : document.getElementById('main').scrollTo(0, 0);
+    }
+
+    function showTree() {
+      renderTree(sidebar, tree, { href: docHref, active: currentPath() });
+      if (!tree.length) sidebar.innerHTML = '<div class="empty">No docs yet.</div>';
+    }
+
+    // In-app navigation for doc links (sidebar and links inside docs).
+    document.addEventListener('click', e => {
+      const a = e.target.closest('a');
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') return;
+      const url = new URL(a.href, location.href);
+      if (url.origin !== location.origin || !url.pathname.startsWith('/docs/') && url.pathname !== '/') return;
+      if (url.pathname === location.pathname && url.hash) return;
+      e.preventDefault();
+      history.pushState({}, '', url.pathname + url.hash);
+      loadDoc(currentPath());
+    });
+    window.addEventListener('popstate', () => loadDoc(currentPath()));
+
+    let searchTimer;
+    search.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(async () => {
+        const q = search.value.trim();
+        if (!q) return showTree();
+        const results = await api('/api/search?q=' + encodeURIComponent(q));
+        sidebar.innerHTML = results.length
+          ? '<ul class="search-results">' + results.map(r =>
+              `<li><a href="${docHref(r.path)}" data-path="${escapeHtml(r.path)}">${escapeHtml(r.title)}` +
+              (r.snippet ? `<span class="snippet">${escapeHtml(r.snippet)}</span>` : '') + '</a></li>').join('') + '</ul>'
+          : '<div class="empty">No matches.</div>';
+        document.body.classList.add('nav-open');
+      }, 200);
+    });
+
+    (async () => {
+      try { siteTitle = (await api('/api/config')).title; } catch { }
+      document.getElementById('brand').textContent = siteTitle;
+      tree = await api('/api/tree');
+      showTree();
+      loadDoc(currentPath());
+    })();
+  </script>
+</body>
+</html>
