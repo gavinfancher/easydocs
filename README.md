@@ -34,8 +34,8 @@ Open http://localhost:8000.
 - **Images**: paste a screenshot, drag and drop a file, or click **Image**. It's uploaded
   and the markdown link is inserted for you. Images use absolute `/uploads/...` URLs,
   so renaming or moving docs never breaks them.
-- **Resize images**: click an image in the editor's preview, then pick 25% / 50% / 75% / Full
-  or drag its corner. This writes the size into the markdown as `![alt|50%](/uploads/...)`
+- **Resize images**: right-click an image in the editor's preview and pick a size, or choose
+  **Custom size…** and drag its corner. This writes the size into the markdown as `![alt|50%](/uploads/...)`
   (or `|300` for pixels), so it looks the same on the site.
 - **Reuse uploads**: **From uploads** inserts something you've already uploaded. The admin
   panel's **Uploads** tab shows every file and which docs use it.

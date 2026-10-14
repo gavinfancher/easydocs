@@ -29,22 +29,20 @@
       font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2;
     }
     #preview-pane { border-left: 1px solid var(--border); position: relative; }
-    #preview img { cursor: pointer; }
-    #preview img:hover { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+    #preview img { cursor: context-menu; }
     .img-tools { position: absolute; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; z-index: 5; }
-    .img-bar {
-      position: absolute; left: 0; bottom: 100%; margin-bottom: 8px; display: flex; align-items: center; gap: 2px;
-      padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
-      box-shadow: 0 6px 20px rgba(0,0,0,.15); pointer-events: auto; white-space: nowrap;
+    .img-badge {
+      position: absolute; left: 0; bottom: 100%; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+      padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+      box-shadow: 0 6px 20px rgba(0,0,0,.15); font-size: 12px; color: var(--text-soft); white-space: nowrap;
     }
-    .img-bar button { height: 26px; padding: 0 8px; font-size: 12px; border: none; background: none; }
-    .img-bar button:hover { background: var(--bg-hover); }
-    .img-bar button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-    .img-size { font-size: 12px; font-weight: 600; color: var(--accent); padding: 0 8px; border-left: 1px solid var(--border); margin-left: 2px; }
+    .img-badge b { color: var(--accent); }
     .img-handle {
-      position: absolute; right: -8px; bottom: -8px; width: 16px; height: 16px; pointer-events: auto; cursor: nwse-resize;
+      position: absolute; right: -8px; width: 16px; height: 16px; pointer-events: auto;
       background: var(--accent); border: 2px solid var(--bg); border-radius: 50%; touch-action: none;
     }
+    .img-handle.br { bottom: -8px; cursor: nwse-resize; }
+    .img-handle.tr { top: -8px; cursor: nesw-resize; }
     .img-tools.dragging { outline-style: dashed; }
     #preview-pane .markdown { padding: 24px 32px 80px; }
     body.drag-over #editor { outline: 3px dashed var(--accent); outline-offset: -10px; }
@@ -269,22 +267,23 @@
       previewTimer = setTimeout(async () => { await renderMarkdown(editor.value, preview); imgTools.refresh(); }, ms);
     }
 
-    // ---------- resize images: click one in the preview ----------
+    // ---------- resize images: right-click one in the preview ----------
     // The size is stored in the markdown as ![alt|50%](url), so it shows the same on the site.
     const imgTools = (() => {
       const pane = $('preview-pane');
       const box = document.createElement('div');
       box.className = 'img-tools'; box.hidden = true;
-      box.innerHTML = `<div class="img-bar">
-          ${['25%', '50%', '75%'].map(w => `<button data-w="${w}">${w}</button>`).join('')}
-          <button data-w="">Full</button>
-          <span class="img-size"></span>
-        </div>
-        <div class="img-handle" title="Drag to resize"></div>`;
+      box.innerHTML = `<div class="img-badge"><b class="img-size"></b><span>Drag a corner · Esc when done</span></div>
+        <div class="img-handle tr" title="Drag to resize"></div>
+        <div class="img-handle br" title="Drag to resize"></div>`;
       pane.append(box);
-      let sel = null;  // { src, k }: the k-th image in the doc with this src
+      let sel = null;  // drag mode: { src, k } = the k-th image in the doc with this src
 
       const imgs = () => [...preview.querySelectorAll('img')];
+      const keyOf = img => {
+        const src = img.getAttribute('src');
+        return { src, k: imgs().filter(i => i.getAttribute('src') === src).indexOf(img) };
+      };
       const current = () => sel && imgs().filter(i => i.getAttribute('src') === sel.src)[sel.k];
 
       function place() {
@@ -295,29 +294,23 @@
           left: r.left - p.left + pane.scrollLeft + 'px', top: r.top - p.top + pane.scrollTop + 'px',
           width: r.width + 'px', height: r.height + 'px',
         });
-        const w = img.style.width;
-        // Only label sizes the buttons don't already show (e.g. 40% from dragging, or 120px).
-        const label = box.querySelector('.img-size');
-        label.textContent = ['', '25%', '50%', '75%'].includes(w) ? '' : w;
-        label.hidden = !label.textContent;
-        box.querySelectorAll('[data-w]').forEach(b => b.classList.toggle('on', b.dataset.w === w));
+        box.querySelector('.img-size').textContent = img.style.width || 'Full size';
         box.hidden = false;
       }
-      function select(img) {
-        const src = img.getAttribute('src');
-        sel = { src, k: imgs().filter(i => i.getAttribute('src') === src).indexOf(img) };
+      function startDrag(img) {
+        sel = keyOf(img);
         if (!img.complete) img.addEventListener('load', place, { once: true });
         place();
       }
       function clear() { sel = null; box.hidden = true; }
 
-      /** Rewrite the size in the markdown for the selected image (keeps undo working). */
-      function apply(width) {
+      /** Rewrite the size in the markdown for one image (keeps undo working). */
+      function apply(key, width) {
         const re = /!\[((?:\\.|[^\]\\])*)\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g;
         const hits = [...editor.value.matchAll(re)].filter(m => {
-          try { return m[2] === sel.src || encodeURI(m[2]).replace(/%25/g, '%') === sel.src; } catch { return false; }
+          try { return m[2] === key.src || encodeURI(m[2]).replace(/%25/g, '%') === key.src; } catch { return false; }
         });
-        const m = hits[sel.k];
+        const m = hits[key.k];
         if (!m) { toast('Couldn’t find that image in the markdown. Add |50% to its alt text by hand.'); return; }
         const alt = splitImageSize(m[1]).alt + (width ? '|' + width : '');
         const start = m.index + 2;
@@ -327,13 +320,31 @@
         editor.scrollTop = scrollTop;
       }
 
-      box.addEventListener('click', e => {
-        const b = e.target.closest('[data-w]');
-        if (b) { current().style.width = b.dataset.w; place(); apply(b.dataset.w); }
+      // Right-click an image for sizes; Shift+right-click still gets the browser's menu.
+      preview.addEventListener('contextmenu', e => {
+        const img = e.target.closest('img');
+        if (!img || e.shiftKey) return;
+        e.preventDefault();
+        const key = keyOf(img), w = img.style.width;
+        const size = (label, width) => ({
+          label, icon: w === width ? 'check' : null,
+          action: () => { img.style.width = width; apply(key, width); },
+        });
+        const url = new URL(img.getAttribute('src'), location.href).href;
+        showMenu(img, [
+          size('Small (25%)', '25%'), size('Medium (50%)', '50%'), size('Large (75%)', '75%'), size('Full size', ''),
+          { label: 'Custom size…', icon: 'move', hint: ['', '25%', '50%', '75%'].includes(w) ? 'Drag to resize' : `Now ${w}`,
+            action: () => startDrag(img) },
+          'sep',
+          { label: 'Open image in new tab', icon: 'external', action: () => window.open(url, '_blank') },
+          { label: 'Copy image link', icon: 'link', action: async () => {
+              try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+              catch { await askText('Copy this link', url, { okLabel: 'Done' }); } } },
+        ], e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null);
       });
 
-      // Drag the corner: snaps to 5% steps of the page width.
-      box.querySelector('.img-handle').addEventListener('pointerdown', e => {
+      // Drag either right-hand corner: snaps to 5% steps of the page width.
+      box.querySelectorAll('.img-handle').forEach(h => h.addEventListener('pointerdown', e => {
         const img = current(); if (!img) return;
         e.preventDefault();
         const handle = e.currentTarget, startX = e.clientX, startW = img.getBoundingClientRect().width;
@@ -349,15 +360,13 @@
         const up = () => {
           handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up);
           box.classList.remove('dragging');
-          if (pct !== null) apply(pct === 100 ? '' : pct + '%');
+          if (pct !== null) apply(sel, pct === 100 ? '' : pct + '%');
         };
         handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up);
-      });
+      }));
 
-      preview.addEventListener('click', e => {
-        const img = e.target.closest('img');
-        if (img) { e.preventDefault(); select(img); } else clear();
-      });
+      // Clicking anywhere else (or Esc) finishes resizing.
+      document.addEventListener('mousedown', e => { if (sel && !box.contains(e.target)) clear(); });
       document.addEventListener('keydown', e => { if (e.key === 'Escape') clear(); });
       window.addEventListener('resize', place);
       return { refresh: () => sel && place(), clear };
