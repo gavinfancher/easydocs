@@ -26,6 +26,22 @@
     .uploads-card .lib-grid { min-height: 240px; }
     .uploads-tools { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
     .uploads-tools .search { flex: 1; max-width: 320px; }
+    .home-form { padding: 20px; }
+    .home-form .field { display: block; margin-bottom: 16px; }
+    .home-form .field > span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+    .home-form .field small { font-weight: 400; color: var(--text-soft); margin-left: 6px; }
+    .home-form input:not([type]), .home-form textarea {
+      width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-soft); color: var(--text); font: inherit; font-size: 14px;
+    }
+    .home-form textarea { font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+    .home-form input:focus, .home-form textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .home-form textarea.drag-over { outline: 3px dashed var(--accent); outline-offset: -4px; }
+    .home-form .check { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; font-size: 14px; cursor: pointer; }
+    .home-form .check input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+    .home-form .check small { display: block; color: var(--text-soft); font-size: 13px; }
+    .home-status { font-size: 13px; color: var(--text-soft); }
+    .home-status.dirty { color: #c98a00; }
     @media (max-width: 800px) {
       .panel { padding: 20px 16px 40px; }
       .admin-nav { width: 240px; }
@@ -45,6 +61,7 @@
     <nav class="sidebar admin-nav">
       <a href="#docs" data-tab="docs" data-icon="docs">Docs <span class="count" id="doc-count"></span></a>
       <a href="#uploads" data-tab="uploads" data-icon="library">Uploads <span class="count" id="upload-count"></span></a>
+      <a href="#home" data-tab="home" data-icon="home">Home page</a>
     </nav>
     <main class="main">
       <section class="panel" id="tab-docs">
@@ -72,6 +89,28 @@
           <div class="lib-grid" id="lib-grid"></div>
         </div>
       </section>
+
+      <section class="panel" id="tab-home" hidden>
+        <div class="panel-head">
+          <h1>Home page</h1>
+          <span class="home-status" id="home-status"></span>
+          <a class="btn" href="/" target="_blank" data-icon="external">View</a>
+          <button id="home-save" class="primary" disabled title="Save (⌘/Ctrl+S)">Save</button>
+        </div>
+        <p class="panel-sub">The first thing readers see at <code>/</code>.</p>
+        <form class="card home-form" id="home-form">
+          <label class="field"><span>Heading</span>
+            <input name="heading" autocomplete="off" placeholder="Defaults to the site name"></label>
+          <label class="field"><span>Tagline</span>
+            <input name="tagline" autocomplete="off" placeholder="One line about what's here"></label>
+          <label class="field"><span>Intro <small>optional · markdown · paste or drop images</small></span>
+            <textarea name="body" rows="9" spellcheck="true" placeholder="Anything else readers should know first: links, a diagram, a screenshot…"></textarea></label>
+          <label class="check"><input type="checkbox" name="show_sections">
+            <span><b>Browse cards</b><small>A card for each folder, listing its docs</small></span></label>
+          <label class="check"><input type="checkbox" name="show_recent">
+            <span><b>Recently updated</b><small>The six most recently edited docs</small></span></label>
+        </form>
+      </section>
     </main>
   </div>
 
@@ -92,15 +131,78 @@
       onLoad: items => { $('upload-count').textContent = items.length || ''; },
     });
 
+    const TABS = ['docs', 'uploads', 'home'];
     function showTab() {
-      const tab = location.hash === '#uploads' ? 'uploads' : 'docs';
-      $('tab-docs').hidden = tab !== 'docs';
-      $('tab-uploads').hidden = tab !== 'uploads';
+      const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'docs';
+      TABS.forEach(t => { $('tab-' + t).hidden = t !== tab; });
       document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
       document.body.classList.remove('nav-open');
       if (tab === 'uploads') library.load();
+      if (tab === 'home' && !homeLoaded) loadHome();
     }
     window.addEventListener('hashchange', showTab);
+
+    // ---------- home page settings ----------
+    const form = $('home-form');
+    let homeLoaded = false, savedHome = '';
+    const readHome = () => ({
+      heading: form.heading.value.trim(), tagline: form.tagline.value.trim(), body: form.body.value,
+      show_sections: form.show_sections.checked, show_recent: form.show_recent.checked,
+    });
+    const homeDirty = () => homeLoaded && JSON.stringify(readHome()) !== savedHome;
+    function updateHomeStatus() {
+      const dirty = homeDirty();
+      $('home-save').disabled = !dirty;
+      $('home-status').textContent = dirty ? 'Unsaved changes' : '';
+      $('home-status').className = 'home-status' + (dirty ? ' dirty' : '');
+    }
+    function fillHome(h) {
+      form.heading.value = h.heading; form.tagline.value = h.tagline; form.body.value = h.body;
+      form.show_sections.checked = h.show_sections; form.show_recent.checked = h.show_recent;
+      savedHome = JSON.stringify(readHome());
+      updateHomeStatus();
+    }
+    async function loadHome() {
+      try { fillHome(await api('/api/home')); homeLoaded = true; updateHomeStatus(); }
+      catch (err) { toast(err.message); }
+    }
+    async function saveHome() {
+      if (!homeDirty()) return;
+      try { fillHome(await api('/admin/api/home', jsonOpts('PUT', readHome()))); toast('Home page saved'); }
+      catch (err) { toast(err.message); }
+    }
+    form.addEventListener('input', updateHomeStatus);
+    form.addEventListener('submit', e => { e.preventDefault(); saveHome(); });
+    $('home-save').onclick = saveHome;
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's' && !$('tab-home').hidden) { e.preventDefault(); saveHome(); }
+    });
+    window.addEventListener('beforeunload', e => { if (homeDirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+    // Paste or drop images into the intro, like in the editor.
+    async function uploadIntoIntro(files) {
+      const ta = form.body;
+      for (const file of files) {
+        try {
+          const res = await uploadFile(file);
+          const md = res.is_image ? `![${res.name}](${res.url})` : `[${res.name}](${res.url})`;
+          ta.focus();
+          if (!document.execCommand('insertText', false, md)) ta.setRangeText(md, ta.selectionStart, ta.selectionEnd, 'end');
+          updateHomeStatus();
+        } catch (err) { toast(`Upload failed: ${err.message}`); }
+      }
+    }
+    form.body.addEventListener('paste', e => {
+      const files = [...(e.clipboardData?.files || [])];
+      if (files.length) { e.preventDefault(); uploadIntoIntro(files); }
+    });
+    form.body.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); form.body.classList.add('drag-over'); } });
+    form.body.addEventListener('dragleave', () => form.body.classList.remove('drag-over'));
+    form.body.addEventListener('drop', e => {
+      form.body.classList.remove('drag-over');
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault(); uploadIntoIntro([...e.dataTransfer.files]);
+    });
 
     $('new-doc').onclick = () => newDoc();
     $('new-folder').onclick = () => newFolder();

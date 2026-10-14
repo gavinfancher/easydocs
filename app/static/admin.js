@@ -299,6 +299,7 @@ async function uploadFile(file) {
 const displayName = n => n.replace(/-[0-9a-f]{8}(\.\w+)$/, '$1');
 const altText = n => displayName(n).replace(/\.\w+$/, '');
 const markdownFor = it => it.is_image ? `![${altText(it.name)}](${it.url})` : `[${altText(it.name)}](${it.url})`;
+const usedCount = it => it.used_in.length + (it.on_home ? 1 : 0);
 const formatSize = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
 /**
@@ -325,15 +326,15 @@ function createLibrary({ grid, search, onInsert = null, dropZone = null, docLink
       return;
     }
     grid.innerHTML = shown.map(it => {
-      const used = it.used_in.length;
+      const used = usedCount(it);
       return `<div class="lib-card" data-name="${escapeHtml(it.name)}">
         <button class="lib-thumb" data-act="${onInsert ? 'insert' : 'open'}" title="${onInsert ? 'Insert into doc' : 'Open file'}">
           ${it.is_image ? `<img src="${escapeHtml(it.url)}" alt="" loading="lazy">` : escapeHtml(it.name.split('.').pop().toUpperCase())}
         </button>
         <div class="lib-info">
           <div class="lib-name" title="${escapeHtml(displayName(it.name))}">${escapeHtml(displayName(it.name))}</div>
-          <div class="lib-meta ${used ? '' : 'unused'}">${formatSize(it.size)} · ${used ? `used in ${used} doc${used > 1 ? 's' : ''}` : 'not used'}</div>
-          <div class="lib-used">${it.used_in.map(p => `<a href="${escapeHtml(docLink(p))}">${escapeHtml(p)}</a>`).join('')}</div>
+          <div class="lib-meta ${used ? '' : 'unused'}">${formatSize(it.size)} · ${used ? `used in ${used} place${used > 1 ? 's' : ''}` : 'not used'}</div>
+          <div class="lib-used">${it.on_home ? '<a href="/admin/#home">Home page</a>' : ''}${it.used_in.map(p => `<a href="${escapeHtml(docLink(p))}">${escapeHtml(p)}</a>`).join('')}</div>
         </div>
         <div class="lib-actions">
           ${onInsert ? '<button class="insert primary" data-act="insert">Insert</button>' : ''}
@@ -356,10 +357,10 @@ function createLibrary({ grid, search, onInsert = null, dropZone = null, docLink
       catch { await askText('Copy this markdown', markdownFor(item), { okLabel: 'Done' }); }
     }
     if (act === 'rename') {
-      const used = item.used_in.length;
+      const used = usedCount(item);
       const vals = await appDialog({
         title: 'Rename file',
-        message: used ? `Links in ${used} doc${used > 1 ? 's' : ''} will be updated automatically.` : '',
+        message: used ? `Links in ${used} place${used > 1 ? 's' : ''} will be updated automatically.` : '',
         fields: [{ name: 'name', label: 'Name', value: altText(item.name) }],
         okLabel: 'Rename',
       });
@@ -373,8 +374,9 @@ function createLibrary({ grid, search, onInsert = null, dropZone = null, docLink
       } catch (err) { toast(err.message); }
     }
     if (act === 'delete') {
-      const msg = item.used_in.length
-        ? `It's used in: ${item.used_in.join(', ')}. Those docs will show a broken image.`
+      const places = [...(item.on_home ? ['the home page'] : []), ...item.used_in];
+      const msg = places.length
+        ? `It's used in: ${places.join(', ')}. Those pages will show a broken image.`
         : 'No docs use this file.';
       if (!await askConfirm(`Delete ${displayName(item.name)}?`, msg, { okLabel: 'Delete', danger: true })) return;
       try { await api('/admin/api/uploads/' + encodeURIComponent(item.name), { method: 'DELETE' }); await load(); }

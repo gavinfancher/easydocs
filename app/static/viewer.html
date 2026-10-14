@@ -20,6 +20,7 @@
   <div class="layout">
     <nav class="sidebar" id="sidebar"></nav>
     <main class="main" id="main">
+      <div class="home" id="home" hidden></div>
       <article class="markdown" id="content"></article>
     </main>
   </div>
@@ -36,28 +37,78 @@
     let tree = [];
     let siteTitle = 'Docs';
 
-    const currentPath = () => decodeURIComponent(location.pathname.replace(/^\/docs\/?/, '').replace(/^\/$/, '')) || 'index';
+    const home = document.getElementById('home');
+    // '' means the home page.
+    const currentPath = () => decodeURIComponent(location.pathname.replace(/^\/docs\/?/, '').replace(/^\/$/, ''));
     const docHref = p => '/docs/' + p.split('/').map(encodeURIComponent).join('/');
 
-    function firstDoc(items) {
-      for (const it of items) {
-        if (it.type === 'doc') return it.path;
-        const d = firstDoc(it.children);
-        if (d) return d;
-      }
-      return null;
+    const countDocs = items => items.reduce((n, it) => n + (it.type === 'doc' ? 1 : countDocs(it.children)), 0);
+    const allDocs = items => items.flatMap(it => it.type === 'doc' ? [it] : allDocs(it.children));
+
+    function timeAgo(secs) {
+      const d = Date.now() / 1000 - secs;
+      if (d < 60) return 'just now';
+      const units = [[86400 * 365, 'year'], [86400 * 30, 'month'], [86400 * 7, 'week'], [86400, 'day'], [3600, 'hour'], [60, 'minute']];
+      const [size, name] = units.find(([s]) => d >= s);
+      const n = Math.floor(d / size);
+      return `${n} ${name}${n > 1 ? 's' : ''} ago`;
+    }
+
+    /** One card per top-level folder, plus one for docs that aren't in a folder. */
+    function sectionCards() {
+      const loose = tree.filter(it => it.type === 'doc');
+      const groups = [
+        ...(loose.length ? [{ name: 'General', docs: loose }] : []),
+        ...tree.filter(it => it.type === 'folder' && hasDocs(it))
+          .map(f => ({ name: prettyName(f.name), docs: allDocs(f.children), total: countDocs(f.children) })),
+      ];
+      return groups.map(g => {
+        const shown = g.docs.slice(0, 5), more = g.docs.length - shown.length;
+        return `<section class="home-card">
+          <h3><a href="${escapeHtml(docHref(g.docs[0].path))}">${ICONS.folder}${escapeHtml(g.name)}</a>
+            <span class="count">${g.docs.length}</span></h3>
+          <ul>${shown.map(d => `<li><a href="${escapeHtml(docHref(d.path))}">${escapeHtml(d.title || prettyName(d.name))}</a></li>`).join('')}</ul>
+          ${more ? `<div class="more-link">+ ${more} more in the sidebar</div>` : ''}
+        </section>`;
+      }).join('');
+    }
+
+    async function loadHome() {
+      let h;
+      try { h = await api('/api/home'); }
+      catch { h = { heading: '', tagline: '', body: '', show_sections: true, show_recent: true, recent: [] }; }
+      home.innerHTML = `<header class="home-hero">
+          <h1>${escapeHtml(h.heading || siteTitle)}</h1>
+          ${h.tagline ? `<p class="tagline">${escapeHtml(h.tagline)}</p>` : ''}
+        </header>
+        <div class="markdown home-body" id="home-body"></div>
+        ${!tree.length ? `<div class="home-empty">No docs yet. Head to the <a href="/admin/">admin panel</a> to write your first one.</div>` : ''}
+        ${tree.length && h.show_sections ? `<h2 class="home-label">Browse</h2><div class="home-grid">${sectionCards()}</div>` : ''}
+        ${h.show_recent && h.recent.length ? `<h2 class="home-label">Recently updated</h2><ul class="home-recent">${h.recent.map(r => `<li>
+            <a href="${escapeHtml(docHref(r.path))}">${ICONS.doc}<span class="label-text">${escapeHtml(r.title)}</span></a>
+            <span class="where">${escapeHtml(r.path.includes('/') ? r.path.split('/').slice(0, -1).map(prettyName).join(' / ') : '')}</span>
+            <time title="${escapeHtml(new Date(r.modified * 1000).toLocaleString())}">${timeAgo(r.modified)}</time>
+          </li>`).join('')}</ul>` : ''}`;
+      const body = document.getElementById('home-body');
+      if (h.body.trim()) await renderMarkdown(h.body, body); else body.remove();
+      document.title = siteTitle;
     }
 
     async function loadDoc(path, { push = false } = {}) {
       document.body.classList.remove('nav-open');
       if (push) history.pushState({}, '', docHref(path));
+      home.hidden = !!path; content.hidden = !path;
+      if (!path) {
+        await loadHome();
+        setActive(sidebar, null);
+        document.getElementById('main').scrollTo(0, 0);
+        return;
+      }
       try {
         const doc = await api('/api/docs/' + path);
         await renderMarkdown(doc.content, content);
         document.title = `${doc.title} · ${siteTitle}`;
       } catch (e) {
-        const fallback = path === 'index' && firstDoc(tree);
-        if (fallback) return loadDoc(fallback);
         content.innerHTML = tree.length
           ? `<h1>Not found</h1><p>No doc at <code>${escapeHtml(path)}</code>.</p>`
           : `<h1>No docs yet</h1><p>Head to the <a href="/admin/">editor</a> to write your first one.</p>`;

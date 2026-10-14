@@ -2,7 +2,7 @@
 
 A tiny self-hosted markdown docs site with a web editor.
 
-- **`/`**: read-only docs site (sidebar, search, diagrams)
+- **`/`**: read-only docs site: a home page, then sidebar, search and diagrams
 - **`/admin/`**: admin panel (log in here). Organize docs and folders, and manage uploads
 - **`/admin/edit`**: the editor, with live preview
 
@@ -28,6 +28,8 @@ Open http://localhost:8000.
 ## Writing docs
 
 - **New doc**: click **New doc** and give it a title and a folder.
+- **Home page**: in the admin panel's **Home page** tab, set the heading, tagline and an
+  optional markdown intro, and choose whether to show folder cards and recently updated docs.
 - **Organize**: in the admin panel, drag docs onto folders, or use a row's **⋯** menu to rename, move or delete it.
 - **Images**: paste a screenshot, drag and drop a file, or click **Image**. It's uploaded
   and the markdown link is inserted for you. Images use absolute `/uploads/...` URLs,

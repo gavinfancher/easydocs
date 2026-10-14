@@ -78,7 +78,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mydocs"
+name = "mykb"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

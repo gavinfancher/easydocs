@@ -1,11 +1,9 @@
 [project]
-name = "mydocs"
+name = "mykb"
 version = "0.1.0"
 description = "Self-hosted markdown docs with a web editor"
 readme = "README.md"
-authors = [
-    { name = "Gavin Fancher", email = "gavinfancher02@gmail.com" }
-]
+authors = [{ name = "Gavin Fancher", email = "gavinfancher02@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.0",
