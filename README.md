@@ -3,7 +3,7 @@
 A tiny self-hosted markdown docs site with a web editor.
 
 - **`/`**: read-only docs site: a home page, then sidebar, search and diagrams
-- **`/admin/`**: admin panel (log in here). Organize docs and folders, and manage uploads
+- **`/admin/`**: admin panel. Organize docs and folders, and manage uploads
 - **`/admin/edit`**: the editor, with live preview
 
 ## Run it
@@ -11,7 +11,6 @@ A tiny self-hosted markdown docs site with a web editor.
 **Docker (recommended for self-hosting)**
 
 ```sh
-cp .env.example .env        # then set a real MYDOCS_PASSWORD
 docker compose up -d --build
 ```
 
@@ -20,7 +19,7 @@ Open http://localhost:8000. Your docs and uploads live in `./data`.
 **Locally with uv**
 
 ```sh
-MYDOCS_PASSWORD=change-me uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 ```
 
 Open http://localhost:8000.
@@ -50,15 +49,11 @@ Open http://localhost:8000.
 - **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘I italic, ⌘E code, ⌘K link, ⌘⌥1–3 headings,
   ⌘⇧8 bullets, ⌘⇧7 numbers, ⌘⇧9 checklist, ⌘⇧. quote.
 - **Sidebar**: the button at the top left shows or hides it.
-- **Display size**: the magnifier button at the top right switches between 100%, 110% (default)
-  and 125%. Each browser remembers its own choice.
 
 ## Configuration
 
 | Env var           | Default | Purpose                         |
 | ----------------- | ------- | ------------------------------- |
-| `MYDOCS_PASSWORD` | `admin` | Admin password — **change it**  |
-| `MYDOCS_USER`     | `admin` | Admin username                  |
 | `MYDOCS_TITLE`    | `Docs`  | Site name in the header         |
 | `MYDOCS_DATA`     | `data`  | Where docs and uploads are kept |
 
@@ -78,5 +73,5 @@ You can also edit the `.md` files directly; changes show up on refresh.
 
 ## Notes
 
-- The viewer is public. Put it behind your reverse proxy's auth (or a VPN) if the docs are private.
-- Admin login uses a 30-day session cookie; changing the password logs everyone out. Serve it over HTTPS (e.g. Caddy or Traefik in front).
+- There's no login: anyone who can reach the server can read **and edit** everything. The compose file only
+  listens on this machine (`127.0.0.1`); put a reverse proxy with auth (or a VPN) in front before exposing it.

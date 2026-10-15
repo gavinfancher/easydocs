@@ -48,10 +48,6 @@
       .admin-nav { width: 240px; }
     }
   </style>
-  <script>
-    // Display size chosen in the top bar (see setZoom in common.js), applied before the page draws.
-    try { const z = parseFloat(localStorage.getItem('mydocs.zoom')); if (z) document.documentElement.style.setProperty('--zoom', z); } catch { }
-  </script>
 </head>
 <body>
   <header class="topbar">
@@ -60,7 +56,6 @@
     <div class="spacer"></div>
     <a class="btn primary" href="/admin/edit" data-icon="edit">Open editor</a>
     <a class="btn hide-mobile" href="/" target="_blank" data-icon="external">View site</a>
-    <button id="logout" data-icon="logout" title="Log out"><span class="hide-mobile">Log out</span></button>
   </header>
   <div class="layout">
     <nav class="sidebar admin-nav">
@@ -214,7 +209,6 @@
 
     $('new-doc').onclick = () => newDoc();
     $('new-folder').onclick = () => newFolder();
-    $('logout').onclick = logout;
     $('lib-upload').onclick = () => $('lib-file-input').click();
     $('lib-file-input').onchange = e => { library.upload([...e.target.files]); e.target.value = ''; };
 

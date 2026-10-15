@@ -18,7 +18,7 @@
   --radius: 2px;
   --topbar: 52px;
   --sidebar: 260px;
-  --zoom: 1.1;              /* display size; the top bar's size button changes it (100 / 110 / 125%) */
+  --zoom: 1.1;              /* display size */
   zoom: var(--zoom);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: dark;
@@ -311,8 +311,10 @@ button.danger-fill:hover { filter: brightness(1.08); }
 .lib-info { padding: 8px 10px 4px; font-size: 13px; min-width: 0; }
 .lib-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-meta { color: var(--text-soft); font-size: 12px; margin-top: 2px; }
-.lib-meta.unused { color: #c98a00; }
-.lib-used a { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-used { display: flex; gap: 6px; font-size: 12px; margin-top: 2px; white-space: nowrap; min-width: 0; }
+.lib-used a { overflow: hidden; text-overflow: ellipsis; }
+.lib-used .more { flex: none; color: var(--text-soft); }
+.lib-used.unused { color: #c98a00; }
 .lib-actions { display: flex; gap: 4px; padding: 6px 8px 8px; margin-top: auto; }
 .lib-actions button { height: 26px; font-size: 12px; padding: 0 8px; }
 .lib-actions .insert { flex: 1; justify-content: center; }

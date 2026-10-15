@@ -7,10 +7,6 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css">
-  <script>
-    // Display size chosen in the top bar (see setZoom in common.js), applied before the page draws.
-    try { const z = parseFloat(localStorage.getItem('mydocs.zoom')); if (z) document.documentElement.style.setProperty('--zoom', z); } catch { }
-  </script>
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +14,7 @@
     <a href="/" class="brand" id="brand">Docs</a>
     <div class="spacer"></div>
     <input class="search" id="search" type="search" placeholder="Search docs…" autocomplete="off">
-    <a class="btn" href="/admin/" title="Admin panel (login required)">Admin</a>
+    <a class="btn" href="/admin/" title="Admin panel">Admin</a>
   </header>
   <div class="layout">
     <nav class="sidebar" id="sidebar"></nav>
@@ -155,7 +151,7 @@
           { label: 'Open in new tab', icon: 'external', action: () => window.open(url.href, '_blank') },
           { label: 'Copy link', icon: 'link', action: () => copyText(url.href, 'Link copied') },
           'sep',
-          { label: 'Edit', icon: 'edit', hint: 'In the editor (login required)',
+          { label: 'Edit', icon: 'edit', hint: 'In the editor',
             action: () => { location.href = '/admin/edit/' + path.split('/').map(encodeURIComponent).join('/'); } },
         ], at);
       }
@@ -167,7 +163,7 @@
           { label: 'Copy link to this section', icon: 'hash', action: () => copyText(location.origin + location.pathname + '#' + h.id, 'Link copied') },
           { label: 'Copy link to this doc', icon: 'link', action: () => copyText(location.origin + location.pathname, 'Link copied') },
           'sep',
-          { label: 'Edit this doc', icon: 'edit', hint: 'In the editor (login required)',
+          { label: 'Edit this doc', icon: 'edit', hint: 'In the editor',
             action: () => { location.href = '/admin/edit/' + path.split('/').map(encodeURIComponent).join('/'); } },
         ], at);
       }

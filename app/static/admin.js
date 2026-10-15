@@ -3,11 +3,6 @@
 
 const $ = id => document.getElementById(id);
 
-async function logout() {
-  await fetch('/admin/api/logout', { method: 'POST' });
-  location.href = '/';
-}
-
 const baseName = p => p.split('/').pop();
 const parentOf = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const join = (folder, name) => folder ? folder + '/' + name : name;
@@ -389,6 +384,17 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
   const folderOf = el => { const b = el.closest('[data-folder]'); return b ? JSON.parse(b.dataset.folder) : undefined; };
 
   // ---------- grid ----------
+  /** One line per card, so every card is the same height: the first place it's used, then "+N" for the rest. */
+  function usedLine(it) {
+    const places = [...(it.on_home ? [{ href: '/admin/#home', label: 'Home page' }] : []),
+                    ...it.used_in.map(p => ({ href: docLink(p), label: p }))];
+    if (!places.length) return '<div class="lib-used unused">Not used</div>';
+    const [first, ...rest] = places;
+    return `<div class="lib-used" title="${escapeHtml(places.map(p => p.label).join('\n'))}">`
+      + `<a href="${escapeHtml(first.href)}">${escapeHtml(first.label)}</a>`
+      + (rest.length ? `<span class="more">+${rest.length} more</span>` : '') + '</div>';
+  }
+
   function render() {
     renderFolders();
     const q = search.value.trim().toLowerCase();
@@ -411,9 +417,9 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
         </button>
         <div class="lib-info">
           <div class="lib-name" title="${escapeHtml(displayName(it.name))}">${escapeHtml(displayName(it.name))}</div>
-          <div class="lib-meta ${used ? '' : 'unused'}">${formatSize(it.size)} · ${used ? `used in ${used} place${used > 1 ? 's' : ''}` : 'not used'}</div>
-          ${showFolder && it.folder ? `<div class="lib-in">${icon('folder')}${escapeHtml(it.folder)}</div>` : ''}
-          <div class="lib-used">${it.on_home ? '<a href="/admin/#home">Home page</a>' : ''}${it.used_in.map(p => `<a href="${escapeHtml(docLink(p))}">${escapeHtml(p)}</a>`).join('')}</div>
+          <div class="lib-meta">${formatSize(it.size)}</div>
+          ${showFolder ? `<div class="lib-in">${icon('folder')}${escapeHtml(it.folder || 'Unsorted')}</div>` : ''}
+          ${usedLine(it)}
         </div>
         <div class="lib-actions">
           ${onInsert ? '<button class="insert primary" data-act="insert">Insert</button>'

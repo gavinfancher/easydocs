@@ -15,15 +15,8 @@ function prettyName(s) {
 
 // ---------- display size ----------
 
-const ZOOMS = [{ z: 1, label: '100%' }, { z: 1.1, label: '110%', hint: 'Default' }, { z: 1.25, label: '125%' }];
 /** The page's zoom factor. Mouse and layout coordinates are in zoomed pixels; divide by this to place things. */
 const uiZoom = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom')) || 1;
-function setZoom(z) {
-  document.documentElement.style.setProperty('--zoom', z);
-  try { localStorage.setItem('mydocs.zoom', z); } catch { }
-  document.querySelectorAll('.zoom-btn .zoom-label').forEach(el => { el.textContent = Math.round(z * 100) + '%'; });
-  window.dispatchEvent(new Event('resize'));  // anything positioned by hand re-measures
-}
 
 // ---------- markdown ----------
 
@@ -102,11 +95,6 @@ async function renderMarkdown(src, el) {
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
-  if (res.status === 401 && url.startsWith('/admin/api/')) {
-    // Session expired or logged out: go log in, then come back here.
-    location.href = '/admin/login?next=' + encodeURIComponent(location.pathname) + location.hash;
-    throw new Error('Please log in again');
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail || msg; } catch { }
@@ -148,13 +136,11 @@ const ICON_PATHS = {
   external: '<path d="M9.5 2.5h4v4M13.5 2.5L8 8M11.5 9.5v4h-9v-9h4"/>',
   back: '<path d="M10 3.5L5.5 8l4.5 4.5"/>',
   upload: '<path d="M8 10.5V2.5M4.7 5.8L8 2.5l3.3 3.3M2.5 10.5v3h11v-3"/>',
-  logout: '<path d="M6.5 2.5h-4v11h4M10 5l3 3-3 3M13 8H6"/>',
   edit: '<path d="M10.3 2.7l3 3L6 13H3v-3z"/>',
   docs: '<path d="M4 1.8h5l3.2 3.2v9.2H4zM9 1.8V5h3.2M6 8.2h4M6 10.7h4"/>',
   folderPlus: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5zM8 6.7v4M6 8.7h4"/>',
   copy: '<rect x="5" y="5" width="8.5" height="8.5" rx="1.3"/><path d="M11 5V3.3c0-.5-.4-.8-.8-.8H3.3c-.5 0-.8.4-.8.8v6.9c0 .4.4.8.8.8H5"/>',
   trash: '<path d="M2.5 4.5h11M6 4.5V2.8h4v1.7M4 4.5l.7 9h6.6l.7-9"/>',
-  zoom: '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4L14 14M5 7h4M7 5v4"/>',
   chevronRight: '<path d="M6 3.5L10.5 8 6 12.5"/>',
   bold: '<path d="M4.5 2.5h4.2a2.6 2.6 0 0 1 0 5.2H4.5zM4.5 7.7h5a2.9 2.9 0 0 1 0 5.8h-5z"/>',
   italic: '<path d="M7 2.5h5M4 13.5h5M10 2.5L6.5 13.5"/>',
@@ -183,19 +169,6 @@ const ICON_PATHS = {
 const icon = name =>
   `<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 document.querySelectorAll('[data-icon]').forEach(el => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
-
-/** Display size button at the end of the top bar. */
-(() => {
-  const bar = document.querySelector('.topbar');
-  if (!bar) return;
-  const btn = document.createElement('button');
-  btn.className = 'zoom-btn'; btn.title = 'Display size'; btn.setAttribute('aria-label', 'Display size');
-  btn.innerHTML = icon('zoom') + `<span class="zoom-label">${Math.round(uiZoom() * 100)}%</span>`;
-  btn.onclick = () => showMenu(btn, ZOOMS.map(o => ({
-    label: o.label, hint: o.hint, icon: Math.abs(o.z - uiZoom()) < .001 ? 'check' : null, action: () => setZoom(o.z),
-  })));
-  bar.append(btn);
-})();
 
 
 /** Sidebar toggle: collapses the sidebar on desktop (remembered), slides it in on phones. */

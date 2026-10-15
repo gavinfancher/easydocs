@@ -6,21 +6,16 @@ URLs (/uploads/<name>), so moving a doc never breaks its images. Upload folders
 are labels in DATA/upload-folders.json, so filing an upload never changes its URL.
 """
 
-import hashlib
-import hmac
 import json
 import logging
 import os
 import re
-import secrets
 import shutil
-import time
 import uuid
 from pathlib import Path
-from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -31,8 +26,6 @@ DOCS_DIR = DATA_DIR / "docs"
 UPLOADS_DIR = DATA_DIR / "uploads"
 STATIC_DIR = Path(__file__).parent / "static"
 
-ADMIN_USER = os.environ.get("MYDOCS_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("MYDOCS_PASSWORD", "admin")
 SITE_TITLE = os.environ.get("MYDOCS_TITLE", "Docs")
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -80,9 +73,6 @@ sections in the sidebar. The first `# Heading` in a doc is its title.
 if not any(DOCS_DIR.iterdir()):
     (DOCS_DIR / "index.md").write_text(WELCOME)
 
-if ADMIN_PASSWORD == "admin":
-    log.warning("MYDOCS_PASSWORD is not set — admin login is admin/admin. Set it before exposing this server.")
-
 app = FastAPI(title="mydocs", docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -91,38 +81,24 @@ async def cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if path.startswith("/admin"):
-        # Never cache admin pages, or the browser could show the editor after logout.
+        # Never cache admin pages or API responses.
         response.headers["Cache-Control"] = "no-store"
     elif not path.startswith("/uploads/"):
         # Pages, API and app code: always check for a newer version (cheap via ETag).
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
-# ---------- auth: login form + signed session cookie ----------
+# ---------- no login: block cross-site writes ----------
 
-SESSION_COOKIE = "mydocs_session"
-SESSION_DAYS = 30
-# Derived from the credentials, so changing the password logs everyone out.
-SESSION_KEY = hashlib.sha256(f"mydocs:{ADMIN_USER}:{ADMIN_PASSWORD}".encode()).digest()
-
-
-def make_session() -> str:
-    expires = str(int(time.time()) + SESSION_DAYS * 86400)
-    sig = hmac.new(SESSION_KEY, expires.encode(), hashlib.sha256).hexdigest()
-    return f"{expires}.{sig}"
-
-
-def is_logged_in(request: Request) -> bool:
-    expires, _, sig = request.cookies.get(SESSION_COOKIE, "").partition(".")
-    if not expires.isdigit() or int(expires) < time.time():
-        return False
-    expected = hmac.new(SESSION_KEY, expires.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(sig, expected)
-
-
-def require_admin(request: Request) -> None:
-    if not is_logged_in(request):
-        raise HTTPException(401, "Not logged in")
+@app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    # There's no login, so stop other websites' pages from changing things via the
+    # visitor's browser: a write from a page must come from this site.
+    origin = request.headers.get("origin")
+    if (request.method not in ("GET", "HEAD", "OPTIONS") and origin
+            and origin.split("://", 1)[-1] != request.headers.get("host")):
+        return JSONResponse({"detail": "Cross-site request blocked"}, status_code=403)
+    return await call_next(request)
 
 
 # ---------- path helpers ----------
@@ -264,33 +240,7 @@ class HomeBody(BaseModel):
     show_recent: bool = True
 
 
-class LoginBody(BaseModel):
-    username: str
-    password: str
-
-
-admin = Depends(require_admin)
-
-
-@app.post("/admin/api/login")
-def login(body: LoginBody, response: Response):
-    ok_user = secrets.compare_digest(body.username.encode(), ADMIN_USER.encode())
-    ok_pass = secrets.compare_digest(body.password.encode(), ADMIN_PASSWORD.encode())
-    if not (ok_user and ok_pass):
-        time.sleep(1)  # slow down password guessing
-        raise HTTPException(401, "Wrong username or password")
-    response.set_cookie(SESSION_COOKIE, make_session(), max_age=SESSION_DAYS * 86400,
-                        httponly=True, samesite="lax", path="/")
-    return {"ok": True}
-
-
-@app.post("/admin/api/logout")
-def logout(response: Response):
-    response.delete_cookie(SESSION_COOKIE, path="/")
-    return {"ok": True}
-
-
-@app.post("/admin/api/docs", dependencies=[admin])
+@app.post("/admin/api/docs")
 def create_doc(body: CreateBody):
     f = doc_file(body.path)
     if f.exists():
@@ -300,7 +250,7 @@ def create_doc(body: CreateBody):
     return {"path": clean_rel(body.path)}
 
 
-@app.put("/admin/api/docs/{rel:path}", dependencies=[admin])
+@app.put("/admin/api/docs/{rel:path}")
 def save_doc(rel: str, body: DocBody):
     f = doc_file(rel)
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -308,7 +258,7 @@ def save_doc(rel: str, body: DocBody):
     return {"path": clean_rel(rel), "title": title_of(f)}
 
 
-@app.delete("/admin/api/docs/{rel:path}", dependencies=[admin])
+@app.delete("/admin/api/docs/{rel:path}")
 def delete_doc(rel: str):
     f = doc_file(rel)
     if not f.is_file():
@@ -317,7 +267,7 @@ def delete_doc(rel: str):
     return {"ok": True}
 
 
-@app.post("/admin/api/move", dependencies=[admin])
+@app.post("/admin/api/move")
 def move(body: MoveBody):
     """Rename/move a doc or a folder."""
     src_doc, dst_doc = doc_file(body.src), doc_file(body.dst)
@@ -336,13 +286,13 @@ def move(body: MoveBody):
     return {"path": clean_rel(body.dst)}
 
 
-@app.post("/admin/api/folders", dependencies=[admin])
+@app.post("/admin/api/folders")
 def create_folder(body: FolderBody):
     folder_dir(body.path).mkdir(parents=True, exist_ok=True)
     return {"path": clean_rel(body.path)}
 
 
-@app.delete("/admin/api/folders/{rel:path}", dependencies=[admin])
+@app.delete("/admin/api/folders/{rel:path}")
 def delete_folder(rel: str):
     d = folder_dir(rel)
     if not d.is_dir():
@@ -353,7 +303,7 @@ def delete_folder(rel: str):
     return {"ok": True}
 
 
-@app.put("/admin/api/home", dependencies=[admin])
+@app.put("/admin/api/home")
 def save_home(body: HomeBody):
     HOME_FILE.write_text(json.dumps(body.model_dump(), indent=2), encoding="utf-8")
     return load_home()
@@ -419,7 +369,7 @@ class MoveUploadsBody(BaseModel):
     folder: str = ""
 
 
-@app.post("/admin/api/upload-folders", dependencies=[admin])
+@app.post("/admin/api/upload-folders")
 def create_upload_folder(body: UploadFolderBody):
     path = clean_upload_folder(body.path)
     if not path:
@@ -441,7 +391,7 @@ def reparent(path: str, src: str, dst: str) -> str:
     return path
 
 
-@app.post("/admin/api/upload-folders/move", dependencies=[admin])
+@app.post("/admin/api/upload-folders/move")
 def move_upload_folder(body: MoveUploadFolderBody):
     """Rename or move a folder, along with everything inside it."""
     src, dst = clean_upload_folder(body.src), clean_upload_folder(body.dst)
@@ -462,7 +412,7 @@ def move_upload_folder(body: MoveUploadFolderBody):
     return {"path": dst}
 
 
-@app.post("/admin/api/upload-folders/delete", dependencies=[admin])
+@app.post("/admin/api/upload-folders/delete")
 def delete_upload_folder(body: UploadFolderBody):
     """Remove a folder. Nothing is deleted: what was inside moves up one level."""
     path = clean_upload_folder(body.path)
@@ -476,7 +426,7 @@ def delete_upload_folder(body: UploadFolderBody):
     return {"ok": True}
 
 
-@app.post("/admin/api/uploads/move", dependencies=[admin])
+@app.post("/admin/api/uploads/move")
 def move_uploads(body: MoveUploadsBody):
     folder = clean_upload_folder(body.folder)
     meta = load_upload_folders()
@@ -491,7 +441,7 @@ def move_uploads(body: MoveUploadsBody):
     return {"ok": True, "folder": folder}
 
 
-@app.post("/admin/api/uploads", dependencies=[admin])
+@app.post("/admin/api/uploads")
 async def upload(file: UploadFile = File(...), folder: str = Form("")):
     name = Path(file.filename or "file").name
     ext = Path(name).suffix.lower()
@@ -513,7 +463,7 @@ async def upload(file: UploadFile = File(...), folder: str = Form("")):
     return {"url": f"/uploads/{final}", "name": Path(name).stem, "is_image": ext in IMAGE_EXTS, "folder": folder}
 
 
-@app.get("/admin/api/uploads", dependencies=[admin])
+@app.get("/admin/api/uploads")
 def list_uploads():
     """Upload folders, plus every uploaded file (newest first) with its folder and the docs that use it."""
     docs = {f.relative_to(DOCS_DIR).as_posix()[:-3]: f.read_text(encoding="utf-8")
@@ -542,7 +492,7 @@ def file_slug(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-").lower()[:40] or "file"
 
 
-@app.post("/admin/api/uploads/{name}/rename", dependencies=[admin])
+@app.post("/admin/api/uploads/{name}/rename")
 def rename_upload(name: str, body: RenameUploadBody):
     """Rename an uploaded file and update every doc that links to it."""
     f = upload_path(name)
@@ -578,7 +528,7 @@ def rename_upload(name: str, body: RenameUploadBody):
     return {"name": final, "url": new_url, "old_stem": old_stem, "new_stem": new_stem, "docs": sorted(changed)}
 
 
-@app.delete("/admin/api/uploads/{name}", dependencies=[admin])
+@app.delete("/admin/api/uploads/{name}")
 def delete_upload(name: str):
     upload_path(name).unlink()
     meta = load_upload_folders()
@@ -610,26 +560,15 @@ def admin_redirect():
 
 
 @app.get("/admin/")
-def admin_page(request: Request):
-    if not is_logged_in(request):
-        return RedirectResponse("/admin/login")
+def admin_page():
     return FileResponse(STATIC_DIR / "admin.html")
 
 
 @app.get("/admin/edit")
 @app.get("/admin/edit/{rel:path}")
-def editor_page(request: Request, rel: str = ""):
+def editor_page(rel: str = ""):
     # /admin/edit/<doc path> opens that doc; the page reads the path itself.
-    if not is_logged_in(request):
-        return RedirectResponse("/admin/login?next=" + quote(request.url.path, safe=""))
     return FileResponse(STATIC_DIR / "editor.html")
-
-
-@app.get("/admin/login")
-def login_page(request: Request):
-    if is_logged_in(request):
-        return RedirectResponse("/admin/")
-    return FileResponse(STATIC_DIR / "login.html")
 
 
 @app.get("/")

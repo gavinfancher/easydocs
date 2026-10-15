@@ -65,10 +65,6 @@
     .sidebar { display: flex; flex-direction: column; }
     #tree { flex: 1; border-radius: var(--radius); }
   </style>
-  <script>
-    // Display size chosen in the top bar (see setZoom in common.js), applied before the page draws.
-    try { const z = parseFloat(localStorage.getItem('mydocs.zoom')); if (z) document.documentElement.style.setProperty('--zoom', z); } catch { }
-  </script>
 </head>
 <body>
   <header class="topbar">
