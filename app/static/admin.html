@@ -59,9 +59,9 @@
   </header>
   <div class="layout">
     <nav class="sidebar admin-nav">
-      <a href="#docs" data-tab="docs" data-icon="docs">Docs <span class="count" id="doc-count"></span></a>
-      <a href="#uploads" data-tab="uploads" data-icon="library">Uploads <span class="count" id="upload-count"></span></a>
-      <a href="#home" data-tab="home" data-icon="home">Home page</a>
+      <a href="/admin/" data-tab="docs" data-icon="docs">Docs <span class="count" id="doc-count"></span></a>
+      <a href="/admin/uploads" data-tab="uploads" data-icon="library">Uploads <span class="count" id="upload-count"></span></a>
+      <a href="/admin/home" data-tab="home" data-icon="home">Home page</a>
     </nav>
     <main class="main">
       <section class="panel" id="tab-docs">
@@ -134,16 +134,27 @@
       onLoad: items => { $('upload-count').textContent = items.length || ''; },
     });
 
+    // Each tab has its own address: /admin/ (docs), /admin/uploads, /admin/home.
     const TABS = ['docs', 'uploads', 'home'];
+    const tabFromUrl = () => { const t = location.pathname.replace(/^\/admin\/?/, '').replace(/\/$/, ''); return TABS.includes(t) ? t : 'docs'; };
     function showTab() {
-      const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'docs';
+      const tab = tabFromUrl();
       TABS.forEach(t => { $('tab-' + t).hidden = t !== tab; });
       document.querySelectorAll('[data-tab]').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
       document.body.classList.remove('nav-open');
       if (tab === 'uploads') library.load();
       if (tab === 'home' && !homeLoaded) loadHome();
     }
-    window.addEventListener('hashchange', showTab);
+    window.addEventListener('popstate', showTab);
+    // Links to another tab switch in place instead of reloading the page.
+    document.addEventListener('click', e => {
+      const a = e.target.closest('a[href^="/admin/"]');
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') return;
+      if (!/^\/admin\/(uploads|home)?$/.test(a.getAttribute('href'))) return;
+      e.preventDefault();
+      if (a.getAttribute('href') !== location.pathname) history.pushState({}, '', a.getAttribute('href'));
+      showTab();
+    });
 
     // ---------- home page settings ----------
     const form = $('home-form');

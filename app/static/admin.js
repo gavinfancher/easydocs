@@ -386,7 +386,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
   // ---------- grid ----------
   /** One line per card, so every card is the same height: the first place it's used, then "+N" for the rest. */
   function usedLine(it) {
-    const places = [...(it.on_home ? [{ href: '/admin/#home', label: 'Home page' }] : []),
+    const places = [...(it.on_home ? [{ href: '/admin/home', label: 'Home page' }] : []),
                     ...it.used_in.map(p => ({ href: docLink(p), label: p }))];
     if (!places.length) return '<div class="lib-used unused">Not used</div>';
     const [first, ...rest] = places;

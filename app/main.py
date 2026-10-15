@@ -560,6 +560,8 @@ def admin_redirect():
 
 
 @app.get("/admin/")
+@app.get("/admin/uploads")
+@app.get("/admin/home")
 def admin_page():
     return FileResponse(STATIC_DIR / "admin.html")
 

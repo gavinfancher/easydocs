@@ -156,7 +156,6 @@ const ICON_PATHS = {
   cut: '<circle cx="4.3" cy="11.7" r="1.8"/><circle cx="11.7" cy="11.7" r="1.8"/><path d="M5.6 10.4L12 2.5M10.4 10.4L4 2.5"/>',
   paste: '<rect x="3" y="2.8" width="10" height="11" rx="1.2"/><path d="M6 2.8V2h4v.8M6 7h4M6 9.8h4"/>',
   selectAll: '<rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2 1.6"/><path d="M5.5 6.5h5M5.5 9.5h5"/>',
-  hash: '<path d="M6 2.5l-1.3 11M11.3 2.5L10 13.5M2.8 6h11M2.2 10h11"/>',
   home: '<path d="M2.5 7.3L8 2.8l5.5 4.5M4 6.2v7.3h3V10h2v3.5h3V6.2"/>',
   folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
   check: '<path d="M3 8.5l3.2 3L13 4.5"/>',

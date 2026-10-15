@@ -129,9 +129,10 @@
       if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') return;
       const url = new URL(a.href, location.href);
       if (url.origin !== location.origin || !url.pathname.startsWith('/docs/') && url.pathname !== '/') return;
-      if (url.pathname === location.pathname && url.hash) return;
       e.preventDefault();
-      history.pushState({}, '', url.pathname + url.hash);
+      // Links to a section on this page just scroll there, so the address never gets a #.
+      if (url.pathname === location.pathname && url.hash) { document.getElementById(decodeURIComponent(url.hash.slice(1)))?.scrollIntoView(); return; }
+      history.pushState({}, '', url.pathname);
       loadDoc(currentPath());
     });
     window.addEventListener('popstate', () => loadDoc(currentPath()));
@@ -160,7 +161,6 @@
         e.preventDefault();
         const path = currentPath();
         showMenu(h, [
-          { label: 'Copy link to this section', icon: 'hash', action: () => copyText(location.origin + location.pathname + '#' + h.id, 'Link copied') },
           { label: 'Copy link to this doc', icon: 'link', action: () => copyText(location.origin + location.pathname, 'Link copied') },
           'sep',
           { label: 'Edit this doc', icon: 'edit', hint: 'In the editor',

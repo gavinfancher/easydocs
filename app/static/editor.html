@@ -623,9 +623,7 @@
     (async () => {
       try { $('brand').firstChild.textContent = (await api('/api/config')).title + ' '; } catch { }
       await refreshTree();
-      // Old links looked like /admin/edit#guides/setup; send them to the new address.
-      const legacy = location.hash.length > 1 && !pathFromUrl() ? decodeURIComponent(location.hash.slice(1)) : '';
-      const p = legacy || pathFromUrl();
+      const p = pathFromUrl();
       if (p) openDoc(p);
     })();
   </script>
