@@ -94,6 +94,7 @@
         </div>
         <div class="tools">
           <button id="link-btn" data-icon="link" title="Insert a link (⌘K)">Link</button>
+          <button id="code-btn" data-icon="code" title="Code block (⌘⇧E)">Code</button>
           <button id="image-btn" data-icon="image" title="Upload an image or file. You can also paste or drag one in.">Image</button>
           <button id="library-btn" data-icon="library" title="Insert something you've already uploaded">From uploads</button>
           <input type="file" id="file-input" multiple hidden>
@@ -416,6 +417,7 @@
       insertText(`[${label}](${url})`);
     }
     $('link-btn').onclick = insertLink;
+    $('code-btn').onclick = () => { editor.focus(); codeBlock(); };
 
     /** Images go on their own line so they don't run into the surrounding text. */
     function ownLine(md) {
@@ -432,6 +434,7 @@
       else if (mod && e.key === 'i') { e.preventDefault(); wrap('_'); }
       else if (mod && e.key === 'k') { e.preventDefault(); insertLink(); }
       else if (mod && !e.shiftKey && e.key === 'e') { e.preventDefault(); wrap('`', 'code'); }
+      else if (mod && e.shiftKey && e.code === 'KeyE') { e.preventDefault(); codeBlock(); }
       else if (mod && e.shiftKey && e.code === 'KeyX') { e.preventDefault(); wrap('~~'); }
       else if (mod && e.altKey && /^Digit[0-3]$/.test(e.code)) { e.preventDefault(); setHeading(+e.code.slice(5)); }
       else if (mod && e.shiftKey && e.code === 'Digit8') { e.preventDefault(); bulletList(); }
@@ -603,7 +606,7 @@
           { label: 'Numbered list', icon: 'list', shortcut: 'Mod+Shift+7', action: numberedList },
           { label: 'Checklist', icon: 'checklist', shortcut: 'Mod+Shift+9', action: checklist },
           { label: 'Quote', icon: 'quote', shortcut: 'Mod+Shift+.', action: quote },
-          { label: 'Code block', icon: 'code', action: codeBlock },
+          { label: 'Code block', icon: 'code', shortcut: 'Mod+Shift+E', action: codeBlock },
         ] },
         { label: 'Insert', icon: 'plus', submenu: [
           { label: 'Link…', icon: 'link', shortcut: 'Mod+K', action: insertLink },

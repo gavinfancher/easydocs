@@ -159,7 +159,9 @@ details[open] > .folder-row .chev { transform: rotate(90deg); }
 .markdown .code-wrap { position: relative; margin: 1em 0; }
 .markdown .code-wrap > pre { margin: 0; }
 .markdown .code-copy {
-  position: absolute; top: 8px; right: 8px; width: 30px; height: 28px; padding: 0; justify-content: center;
+  /* Centered on the first line of code (1px border + 14px padding + half a 13.5px×1.5 line, minus half
+     the button), so a one-line block has it dead center and longer blocks keep it in the corner. */
+  position: absolute; top: calc(15px + 13.5px * 1.5 / 2 - 14px); right: 11px; width: 30px; height: 28px; padding: 0; justify-content: center;
   opacity: 0; transition: opacity .12s;
 }
 .markdown .code-wrap:hover .code-copy, .markdown .code-copy:focus-visible, .markdown .code-copy.done { opacity: 1; }
