@@ -3,13 +3,6 @@
 
 const $ = id => document.getElementById(id);
 
-function toast(msg, ms = 2500) {
-  let t = $('toast');
-  if (!t) { t = Object.assign(document.createElement('div'), { id: 'toast', className: 'toast' }); document.body.append(t); }
-  t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove('show'), ms);
-}
-
 async function logout() {
   await fetch('/admin/api/logout', { method: 'POST' });
   location.href = '/';
@@ -209,10 +202,7 @@ async function deleteFolder(path) {
 
 const siteUrl = path => location.origin + '/docs/' + path.split('/').map(encodeURIComponent).join('/');
 
-async function copyLink(path) {
-  try { await navigator.clipboard.writeText(siteUrl(path)); toast('Link copied'); }
-  catch { await askText('Copy this link', siteUrl(path), { okLabel: 'Done' }); }
-}
+const copyLink = path => copyText(siteUrl(path), 'Link copied');
 
 function docMenu(anchor, path, at) {
   const isOpen = docHooks.active() === path;
@@ -384,7 +374,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
   function renderFolders() {
     if (!folderNav) return;
     const count = f => items.filter(it => it.folder === f).length;
-    const row = (value, label, ico, depth, n) => `<button class="lib-folder ${value === cur ? 'active' : ''}"
+    const row = (value, label, ico, depth, n) => `<button class="lib-folder ${value === cur ? 'active' : ''} ${ico === 'folder' ? 'is-folder' : ''}"
         data-folder="${escapeHtml(JSON.stringify(value))}" style="--depth:${depth}" title="${escapeHtml(label)}">
         ${icon(ico)}<span class="label-text">${escapeHtml(label)}</span><span class="count">${n || ''}</span></button>`;
     folderNav.innerHTML =

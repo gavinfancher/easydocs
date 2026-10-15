@@ -1,7 +1,5 @@
 // Shared helpers for the viewer and admin pages.
 
-const isDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
-
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -13,6 +11,18 @@ function slugify(s) {
 function prettyName(s) {
   const t = s.replace(/^\d+[-_ ]/, '').replace(/[-_]+/g, ' ').trim();
   return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+// ---------- display size ----------
+
+const ZOOMS = [{ z: 1, label: '100%' }, { z: 1.1, label: '110%', hint: 'Default' }, { z: 1.25, label: '125%' }];
+/** The page's zoom factor. Mouse and layout coordinates are in zoomed pixels; divide by this to place things. */
+const uiZoom = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom')) || 1;
+function setZoom(z) {
+  document.documentElement.style.setProperty('--zoom', z);
+  try { localStorage.setItem('mydocs.zoom', z); } catch { }
+  document.querySelectorAll('.zoom-btn .zoom-label').forEach(el => { el.textContent = Math.round(z * 100) + '%'; });
+  window.dispatchEvent(new Event('resize'));  // anything positioned by hand re-measures
 }
 
 // ---------- markdown ----------
@@ -48,9 +58,28 @@ renderer.image = function (a, b, c) {
 };
 marked.setOptions({ renderer, gfm: true, breaks: false });
 
-mermaid.initialize({ startOnLoad: false, theme: isDark() ? 'dark' : 'default', securityLevel: 'strict' });
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
 
 let mermaidSeq = 0;
+/** GitHub-style "copy" button in the corner of a code block. */
+function addCopyButton(pre) {
+  const wrap = document.createElement('div');
+  wrap.className = 'code-wrap';
+  pre.replaceWith(wrap);
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'code-copy'; btn.title = 'Copy code'; btn.setAttribute('aria-label', 'Copy code');
+  btn.innerHTML = icon('copy');
+  btn.onclick = async () => {
+    const ok = await copyPlain(pre.querySelector('code')?.textContent ?? pre.textContent);
+    btn.innerHTML = icon(ok ? 'check' : 'x');
+    btn.classList.toggle('done', ok);
+    btn.title = ok ? 'Copied!' : 'Copy failed: select the code and press ' + kbd('Mod+C');
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => { btn.innerHTML = icon('copy'); btn.classList.remove('done'); btn.title = 'Copy code'; }, 1800);
+  };
+  wrap.append(pre, btn);
+}
+
 async function renderMarkdown(src, el) {
   el.innerHTML = DOMPurify.sanitize(marked.parse(src));
   const seen = {};
@@ -60,6 +89,7 @@ async function renderMarkdown(src, el) {
     h.id = id;
   });
   el.querySelectorAll('a[href^="http"]').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  el.querySelectorAll('pre:not(.mermaid)').forEach(addCopyButton);
   const nodes = [...el.querySelectorAll('pre.mermaid')];
   if (nodes.length) {
     const run = ++mermaidSeq;
@@ -124,6 +154,23 @@ const ICON_PATHS = {
   folderPlus: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5zM8 6.7v4M6 8.7h4"/>',
   copy: '<rect x="5" y="5" width="8.5" height="8.5" rx="1.3"/><path d="M11 5V3.3c0-.5-.4-.8-.8-.8H3.3c-.5 0-.8.4-.8.8v6.9c0 .4.4.8.8.8H5"/>',
   trash: '<path d="M2.5 4.5h11M6 4.5V2.8h4v1.7M4 4.5l.7 9h6.6l.7-9"/>',
+  zoom: '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4L14 14M5 7h4M7 5v4"/>',
+  chevronRight: '<path d="M6 3.5L10.5 8 6 12.5"/>',
+  bold: '<path d="M4.5 2.5h4.2a2.6 2.6 0 0 1 0 5.2H4.5zM4.5 7.7h5a2.9 2.9 0 0 1 0 5.8h-5z"/>',
+  italic: '<path d="M7 2.5h5M4 13.5h5M10 2.5L6.5 13.5"/>',
+  strike: '<path d="M2.5 8h11M11 4.5c-.6-1.3-1.8-2-3.3-2C5.9 2.5 4.8 3.4 4.8 4.8c0 .9.5 1.6 1.4 2.1M5 11.3c.6 1.4 1.9 2.2 3.4 2.2 1.9 0 3.1-1 3.1-2.5 0-.6-.2-1.1-.5-1.5"/>',
+  code: '<path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5"/>',
+  heading: '<path d="M3 2.5v11M11 2.5v11M3 8h8"/>',
+  list: '<path d="M6 4h8M6 8h8M6 12h8"/><circle cx="2.8" cy="4" r=".5"/><circle cx="2.8" cy="8" r=".5"/><circle cx="2.8" cy="12" r=".5"/>',
+  checklist: '<path d="M2 4l1.2 1.2L5.5 3M2 10l1.2 1.2 2.3-2.2M8 4.3h6M8 10.3h6"/>',
+  quote: '<path d="M3 4v8M6.5 5h7M6.5 8h7M6.5 11h4.5"/>',
+  table: '<rect x="2" y="2.5" width="12" height="11" rx="1"/><path d="M2 6.3h12M2 10h12M6.5 6.3v7.2"/>',
+  minus: '<path d="M2.5 8h11"/>',
+  diagram: '<rect x="1.8" y="2.3" width="4.5" height="3.4" rx=".6"/><rect x="9.7" y="2.3" width="4.5" height="3.4" rx=".6"/><rect x="5.8" y="10.3" width="4.5" height="3.4" rx=".6"/><path d="M4 5.7v2.3h8V5.7M8 8v2.3"/>',
+  cut: '<circle cx="4.3" cy="11.7" r="1.8"/><circle cx="11.7" cy="11.7" r="1.8"/><path d="M5.6 10.4L12 2.5M10.4 10.4L4 2.5"/>',
+  paste: '<rect x="3" y="2.8" width="10" height="11" rx="1.2"/><path d="M6 2.8V2h4v.8M6 7h4M6 9.8h4"/>',
+  selectAll: '<rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2 1.6"/><path d="M5.5 6.5h5M5.5 9.5h5"/>',
+  hash: '<path d="M6 2.5l-1.3 11M11.3 2.5L10 13.5M2.8 6h11M2.2 10h11"/>',
   home: '<path d="M2.5 7.3L8 2.8l5.5 4.5M4 6.2v7.3h3V10h2v3.5h3V6.2"/>',
   folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.5h4.7A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>',
   check: '<path d="M3 8.5l3.2 3L13 4.5"/>',
@@ -136,6 +183,20 @@ const ICON_PATHS = {
 const icon = name =>
   `<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 document.querySelectorAll('[data-icon]').forEach(el => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
+
+/** Display size button at the end of the top bar. */
+(() => {
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  const btn = document.createElement('button');
+  btn.className = 'zoom-btn'; btn.title = 'Display size'; btn.setAttribute('aria-label', 'Display size');
+  btn.innerHTML = icon('zoom') + `<span class="zoom-label">${Math.round(uiZoom() * 100)}%</span>`;
+  btn.onclick = () => showMenu(btn, ZOOMS.map(o => ({
+    label: o.label, hint: o.hint, icon: Math.abs(o.z - uiZoom()) < .001 ? 'check' : null, action: () => setZoom(o.z),
+  })));
+  bar.append(btn);
+})();
+
 
 /** Sidebar toggle: collapses the sidebar on desktop (remembered), slides it in on phones. */
 (() => {
@@ -286,35 +347,121 @@ const askText = (title, value = '', opts = {}) =>
   appDialog({ title, fields: [{ name: 'v', value }], ...opts }).then(r => r && r.v);
 const askConfirm = (title, message = '', opts = {}) => appDialog({ title, message, ...opts });
 
+// ---------- toast & clipboard ----------
+
+function toast(msg, ms = 2500) {
+  let t = document.getElementById('toast');
+  if (!t) { t = Object.assign(document.createElement('div'), { id: 'toast', className: 'toast' }); document.body.append(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/** Copy text; falls back to a dialog showing it (e.g. plain http on another machine, where clipboard access is blocked). */
+/** Copy plain text. The clipboard API needs https or localhost; otherwise fall back to the old way. */
+async function copyPlain(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { }
+  const ta = Object.assign(document.createElement('textarea'), { value: text });
+  Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0' });
+  const active = document.activeElement;
+  document.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { }
+  ta.remove(); active?.focus?.({ preventScroll: true });
+  return ok;
+}
+
+/** Copy text and say so; if the browser refuses, show it in a dialog to copy by hand. */
+async function copyText(text, done = 'Copied') {
+  if (await copyPlain(text)) toast(done);
+  else await askText('Copy this', text, { okLabel: 'Done' });
+}
+
+// Shortcut labels in menus: ⌘B on a Mac, Ctrl+B elsewhere.
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const kbd = keys => IS_MAC ? keys.replace(/Mod\+/g, '⌘').replace(/Shift\+/g, '⇧').replace(/Alt\+/g, '⌥') : keys.replace(/Mod\+/g, 'Ctrl+');
+
 // ---------- popup menu ----------
+
+/** Put a fixed-position element at screen point (x, y), allowing for the display size. */
+function placeAt(el, x, y) {
+  const z = uiZoom();
+  Object.assign(el.style, { left: Math.max(8, x) / z + 'px', top: Math.max(8, y) / z + 'px' });
+}
 
 let closeOpenMenu = null, openMenuAnchor = null;
 
 /**
- * items: [{ label, action, icon, danger, disabled, hint }] or 'sep'
+ * A desktop-style menu.
+ * items: [{ label, action, icon, danger, disabled, hint, shortcut: 'Mod+B', submenu: [...items] }] or 'sep'
  * at: {x, y} opens the menu at the pointer (right-click) instead of under `anchor`.
+ * Keyboard: ↑↓ move, → opens a submenu, ← closes it, Enter picks, Esc closes.
  */
 function showMenu(anchor, items, at = null) {
   // Clicking the same button again closes its menu.
   if (closeOpenMenu && openMenuAnchor === anchor && !at) { closeOpenMenu(); return; }
   closeOpenMenu?.();
-  const menu = document.createElement('div');
-  menu.className = 'popup-menu';
-  menu.setAttribute('role', 'menu');
-  items.forEach(it => {
-    if (it === 'sep') { menu.append(document.createElement('hr')); return; }
-    const b = document.createElement('button');
-    b.setAttribute('role', 'menuitem');
-    b.className = it.danger ? 'danger' : '';
-    b.disabled = !!it.disabled;
-    b.innerHTML = (it.icon ? icon(it.icon) : '<span class="ico"></span>') +
-      `<span class="menu-label">${escapeHtml(it.label)}${it.hint ? `<small>${escapeHtml(it.hint)}</small>` : ''}</span>`;
-    b.onclick = () => { close(); it.action(); };
-    menu.append(b);
-  });
-  document.body.append(menu);
+  const menus = [];       // menus[0] is the main menu, then any open submenus
+  let hoverTimer;
+
+  function build(list, level) {
+    const menu = document.createElement('div');
+    menu.className = 'popup-menu' + (level ? ' sub' : '');
+    menu.setAttribute('role', 'menu');
+    menu.tabIndex = -1;
+    list.forEach(it => {
+      if (it === 'sep') { menu.append(document.createElement('hr')); return; }
+      const b = document.createElement('button');
+      b.setAttribute('role', 'menuitem');
+      b.className = it.danger ? 'danger' : '';
+      b.disabled = !!it.disabled;
+      b.innerHTML = (it.icon ? icon(it.icon) : '<span class="ico"></span>') +
+        `<span class="menu-label">${escapeHtml(it.label)}${it.hint ? `<small>${escapeHtml(it.hint)}</small>` : ''}</span>` +
+        (it.shortcut ? `<kbd>${escapeHtml(kbd(it.shortcut))}</kbd>` : '') +
+        (it.submenu ? `<span class="menu-arrow">${icon('chevronRight')}</span>` : '');
+      if (it.submenu) {
+        b.setAttribute('aria-haspopup', 'menu');
+        b.addEventListener('mouseenter', () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => openSub(b, it.submenu, level), 110); });
+        b.onclick = () => openSub(b, it.submenu, level, true);
+        b._submenu = it.submenu;
+      } else {
+        b.addEventListener('mouseenter', () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => closeSubs(level + 1), 160); });
+        b.onclick = () => { close(); it.action(); };
+      }
+      menu.append(b);
+    });
+    // Moving the pointer into a submenu cancels a pending close.
+    if (level) menu.addEventListener('mouseenter', () => clearTimeout(hoverTimer));
+    document.body.append(menu);
+    menus[level] = menu;
+    return menu;
+  }
+
+  function closeSubs(fromLevel) {
+    while (menus.length > fromLevel) menus.pop().remove();
+    menus[fromLevel - 1]?.querySelectorAll('.sub-open').forEach(b => b.classList.remove('sub-open'));
+  }
+
+  function openSub(btn, list, level, focus = false) {
+    const existing = menus[level + 1];
+    if (existing && existing._owner === btn) { if (focus) firstButton(existing)?.focus(); return; }
+    closeSubs(level + 1);
+    btn.classList.add('sub-open');
+    const sub = build(list, level + 1);
+    sub._owner = btn;
+    const r = btn.getBoundingClientRect(), { width: w, height: h } = sub.getBoundingClientRect();
+    let left = r.right - 2;
+    if (left + w > window.innerWidth - 8) left = r.left - w + 2;  // no room on the right: open to the left
+    const top = Math.min(r.top - 4, window.innerHeight - h - 8);
+    placeAt(sub, left, top);
+    if (focus) firstButton(sub)?.focus();
+  }
+
+  const buttonsOf = m => [...m.querySelectorAll('button:not(:disabled)')];
+  const firstButton = m => buttonsOf(m)[0];
+
+  const root = build(items, 0);
   const r = anchor.getBoundingClientRect();
-  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const { width: w, height: h } = root.getBoundingClientRect();
   let left, top;
   if (at) {
     left = Math.min(at.x, window.innerWidth - w - 8);
@@ -323,30 +470,42 @@ function showMenu(anchor, items, at = null) {
     left = Math.min(r.left, window.innerWidth - w - 8);
     top = r.bottom + h + 8 > window.innerHeight ? r.top - h - 4 : r.bottom + 4;
   }
-  Object.assign(menu.style, { left: Math.max(8, left) + 'px', top: Math.max(8, top) + 'px' });
+  placeAt(root, left, top);
   anchor.classList.add('menu-open');
 
-  const buttons = () => [...menu.querySelectorAll('button:not(:disabled)')];
-  const onDown = e => { if (!menu.contains(e.target) && (at || !anchor.contains(e.target))) close(); };
+  const onDown = e => { if (!menus.some(m => m.contains(e.target)) && (at || !anchor.contains(e.target))) close(); };
   const onKey = e => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const level = Math.max(0, menus.findIndex(m => m.contains(document.activeElement)));
+    const menu = menus[level], focused = document.activeElement;
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      if (level > 0) { const owner = menu._owner; closeSubs(level); owner.focus(); } else close();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      const bs = buttons(), i = bs.indexOf(document.activeElement);
-      bs[(i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length]?.focus();
-    }
+      const bs = buttonsOf(menu), i = bs.indexOf(focused);
+      const next = i === -1 ? (e.key === 'ArrowDown' ? 0 : bs.length - 1) : (i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length;
+      bs[next]?.focus();
+    } else if (e.key === 'ArrowRight' && focused?._submenu) {
+      e.preventDefault(); openSub(focused, focused._submenu, level, true);
+    } else if (e.key === 'ArrowLeft' && level > 0) {
+      e.preventDefault(); const owner = menu._owner; closeSubs(level); owner.focus();
+    } else if (e.key === 'Tab') { e.preventDefault(); }
   };
   function close() {
-    menu.remove(); anchor.classList.remove('menu-open'); closeOpenMenu = openMenuAnchor = null;
-    document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey);
+    clearTimeout(hoverTimer);
+    closeSubs(0); anchor.classList.remove('menu-open'); closeOpenMenu = openMenuAnchor = null;
+    document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true);
     window.removeEventListener('blur', close); window.removeEventListener('resize', close);
     document.removeEventListener('scroll', close, true);
   }
   closeOpenMenu = close; openMenuAnchor = anchor;
   setTimeout(() => {
-    document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey, true);
     window.addEventListener('blur', close); window.addEventListener('resize', close);
     document.addEventListener('scroll', close, true);
   });
-  buttons()[0]?.focus();
+  // Opened with the mouse: nothing is highlighted until you point at it (or press ↓).
+  // Opened from the keyboard: start on the first item.
+  const fromKeyboard = !at && document.activeElement === anchor && anchor.matches(':focus-visible');
+  (fromKeyboard ? firstButton(root) : root).focus({ preventScroll: true });
 }

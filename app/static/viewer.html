@@ -6,8 +6,11 @@
   <title>Docs</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="/static/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css">
+  <script>
+    // Display size chosen in the top bar (see setZoom in common.js), applied before the page draws.
+    try { const z = parseFloat(localStorage.getItem('mydocs.zoom')); if (z) document.documentElement.style.setProperty('--zoom', z); } catch { }
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -86,7 +89,6 @@
         ${tree.length && h.show_sections ? `<h2 class="home-label">Browse</h2><div class="home-grid">${sectionCards()}</div>` : ''}
         ${h.show_recent && h.recent.length ? `<h2 class="home-label">Recently updated</h2><ul class="home-recent">${h.recent.map(r => `<li>
             <a href="${escapeHtml(docHref(r.path))}">${ICONS.doc}<span class="label-text">${escapeHtml(r.title)}</span></a>
-            <span class="where">${escapeHtml(r.path.includes('/') ? r.path.split('/').slice(0, -1).map(prettyName).join(' / ') : '')}</span>
             <time title="${escapeHtml(new Date(r.modified * 1000).toLocaleString())}">${timeAgo(r.modified)}</time>
           </li>`).join('')}</ul>` : ''}`;
       const body = document.getElementById('home-body');
@@ -137,6 +139,39 @@
       loadDoc(currentPath());
     });
     window.addEventListener('popstate', () => loadDoc(currentPath()));
+
+    // Right-click a doc (sidebar, search results, home page) or a heading inside a doc.
+    // Other text keeps the browser's menu so copying still works; Shift+right-click always does.
+    document.addEventListener('contextmenu', e => {
+      if (e.shiftKey) return;
+      const at = e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null;
+      const a = e.target.closest('#sidebar a[href^="/docs/"], #home a[href^="/docs/"]');
+      if (a) {
+        e.preventDefault();
+        const url = new URL(a.href), path = decodeURIComponent(url.pathname.slice('/docs/'.length));
+        const isOpen = path === currentPath();
+        return showMenu(a.closest('.row') || a, [
+          { label: isOpen ? 'Open (already open)' : 'Open', icon: 'open', disabled: isOpen, action: () => loadDoc(path, { push: true }) },
+          { label: 'Open in new tab', icon: 'external', action: () => window.open(url.href, '_blank') },
+          { label: 'Copy link', icon: 'link', action: () => copyText(url.href, 'Link copied') },
+          'sep',
+          { label: 'Edit', icon: 'edit', hint: 'In the editor (login required)',
+            action: () => { location.href = '/admin/edit/' + path.split('/').map(encodeURIComponent).join('/'); } },
+        ], at);
+      }
+      const h = e.target.closest('#content :is(h1, h2, h3, h4)');
+      if (h?.id) {
+        e.preventDefault();
+        const path = currentPath();
+        showMenu(h, [
+          { label: 'Copy link to this section', icon: 'hash', action: () => copyText(location.origin + location.pathname + '#' + h.id, 'Link copied') },
+          { label: 'Copy link to this doc', icon: 'link', action: () => copyText(location.origin + location.pathname, 'Link copied') },
+          'sep',
+          { label: 'Edit this doc', icon: 'edit', hint: 'In the editor (login required)',
+            action: () => { location.href = '/admin/edit/' + path.split('/').map(encodeURIComponent).join('/'); } },
+        ], at);
+      }
+    });
 
     let searchTimer;
     search.addEventListener('input', () => {

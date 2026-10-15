@@ -6,8 +6,7 @@
   <title>Editor · Docs</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 1h6l3.5 3.5V15h-9.5z' fill='%232f6fde'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="/static/vendor/hljs-github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css">
   <style>
     .editor-wrap { display: flex; flex-direction: column; height: 100%; }
     .doc-bar {
@@ -22,6 +21,9 @@
     .tools button { height: 28px; font-size: 13px; padding: 0 9px; }
     .tools .sep { width: 1px; background: var(--border); margin: 2px 4px; }
     .panes { flex: 1; display: flex; min-height: 0; }
+    .statusbar { display: flex; gap: 16px; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--bg-soft); font: 11.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-faint); white-space: nowrap; }
+    .statusbar > span { overflow: hidden; text-overflow: ellipsis; }
+    .statusbar > span:first-child { flex: 1; min-width: 0; }
     .panes > * { flex: 1; min-width: 0; overflow-y: auto; }
     #editor {
       border: none; resize: none; outline: none; padding: 24px 28px 80px;
@@ -30,10 +32,10 @@
     }
     #preview-pane { border-left: 1px solid var(--border); position: relative; }
     #preview img { cursor: context-menu; }
-    .img-tools { position: absolute; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; z-index: 5; }
+    .img-tools { position: absolute; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); z-index: 5; }
     .img-badge {
       position: absolute; left: 0; bottom: 100%; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
-      padding: 4px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+      padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
       box-shadow: 0 6px 20px rgba(0,0,0,.15); font-size: 12px; color: var(--text-soft); white-space: nowrap;
     }
     .img-badge b { color: var(--accent); }
@@ -61,8 +63,12 @@
     .sidebar-head button { height: 28px; font-size: 13px; padding: 0 9px; }
     /* Let the tree fill the sidebar so right-click and drop work on the empty space below it. */
     .sidebar { display: flex; flex-direction: column; }
-    #tree { flex: 1; border-radius: 6px; }
+    #tree { flex: 1; border-radius: var(--radius); }
   </style>
+  <script>
+    // Display size chosen in the top bar (see setZoom in common.js), applied before the page draws.
+    try { const z = parseFloat(localStorage.getItem('mydocs.zoom')); if (z) document.documentElement.style.setProperty('--zoom', z); } catch { }
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -99,6 +105,9 @@
         <div class="panes">
           <textarea id="editor" spellcheck="true" placeholder="Start writing… Paste or drop images right here."></textarea>
           <div id="preview-pane"><article class="markdown" id="preview"></article></div>
+        </div>
+        <div class="statusbar" aria-live="off">
+          <span id="sb-doc"></span><span id="sb-pos"></span><span id="sb-words"></span>
         </div>
       </div>
       <div class="placeholder" id="empty-state">
@@ -141,7 +150,7 @@
 
     const isDirty = () => current && editor.value !== savedContent;
     function setStatus(text, cls = '') { statusEl.textContent = text; statusEl.className = 'status ' + cls; }
-    function updateDirty() { isDirty() ? setStatus('Unsaved', 'dirty') : setStatus('Saved'); }
+    function updateDirty() { isDirty() ? setStatus('Unsaved', 'dirty') : setStatus('Saved'); updateStatusbar(); }
     const confirmDiscard = async () => !isDirty() || askConfirm('Discard unsaved changes?',
       `Your edits to "${current}" haven't been saved.`, { okLabel: 'Discard', danger: true });
 
@@ -289,10 +298,10 @@
       function place() {
         const img = current();
         if (!img) { box.hidden = true; return; }
-        const p = pane.getBoundingClientRect(), r = img.getBoundingClientRect();
+        const p = pane.getBoundingClientRect(), r = img.getBoundingClientRect(), z = uiZoom();
         Object.assign(box.style, {
-          left: r.left - p.left + pane.scrollLeft + 'px', top: r.top - p.top + pane.scrollTop + 'px',
-          width: r.width + 'px', height: r.height + 'px',
+          left: (r.left - p.left) / z + pane.scrollLeft + 'px', top: (r.top - p.top) / z + pane.scrollTop + 'px',
+          width: r.width / z + 'px', height: r.height / z + 'px',
         });
         box.querySelector('.img-size').textContent = img.style.width || 'Full size';
         box.hidden = false;
@@ -348,7 +357,8 @@
         const img = current(); if (!img) return;
         e.preventDefault();
         const handle = e.currentTarget, startX = e.clientX, startW = img.getBoundingClientRect().width;
-        const full = preview.getBoundingClientRect().width - parseFloat(getComputedStyle(preview).paddingLeft) - parseFloat(getComputedStyle(preview).paddingRight);
+        const cs = getComputedStyle(preview);  // padding is in page pixels; the rects are zoomed
+        const full = preview.getBoundingClientRect().width - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) * uiZoom();
         let pct = null;
         handle.setPointerCapture(e.pointerId);
         box.classList.add('dragging');
@@ -372,6 +382,19 @@
       return { refresh: () => sel && place(), clear };
     })();
     editor.addEventListener('input', () => { updateDirty(); schedulePreview(); });
+
+    // ---------- status bar ----------
+    function updateStatusbar() {
+      if (!current) return;
+      const before = editor.value.slice(0, editor.selectionStart);
+      const line = before.split('\n').length, col = before.length - before.lastIndexOf('\n');
+      const words = (editor.value.match(/[\p{L}\p{N}'’_-]+/gu) || []).length;
+      const sel = editor.selectionEnd - editor.selectionStart;
+      $('sb-doc').textContent = (isDirty() ? '● ' : '') + current + '.md';
+      $('sb-pos').textContent = `Ln ${line}, Col ${col}` + (sel ? ` (${sel} selected)` : '');
+      $('sb-words').textContent = `${words.toLocaleString()} word${words === 1 ? '' : 's'}`;
+    }
+    ['input', 'keyup', 'click', 'select', 'focus'].forEach(ev => editor.addEventListener(ev, updateStatusbar));
 
     // ---------- text editing ----------
     function insertText(text) {
@@ -412,6 +435,13 @@
       if (mod && e.key === 'b') { e.preventDefault(); wrap('**'); }
       else if (mod && e.key === 'i') { e.preventDefault(); wrap('_'); }
       else if (mod && e.key === 'k') { e.preventDefault(); insertLink(); }
+      else if (mod && !e.shiftKey && e.key === 'e') { e.preventDefault(); wrap('`', 'code'); }
+      else if (mod && e.shiftKey && e.code === 'KeyX') { e.preventDefault(); wrap('~~'); }
+      else if (mod && e.altKey && /^Digit[0-3]$/.test(e.code)) { e.preventDefault(); setHeading(+e.code.slice(5)); }
+      else if (mod && e.shiftKey && e.code === 'Digit8') { e.preventDefault(); bulletList(); }
+      else if (mod && e.shiftKey && e.code === 'Digit7') { e.preventDefault(); numberedList(); }
+      else if (mod && e.shiftKey && e.code === 'Digit9') { e.preventDefault(); checklist(); }
+      else if (mod && e.shiftKey && e.code === 'Period') { e.preventDefault(); quote(); }
       else if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); insertText('  '); }
     });
     document.addEventListener('keydown', e => {
@@ -490,6 +520,108 @@
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('library').hidden && !document.querySelector('dialog[open], .popup-menu')) closeLibrary(); });
     $('lib-upload').onclick = () => $('lib-file-input').click();
     $('lib-file-input').onchange = e => { library.upload([...e.target.files]); e.target.value = ''; };
+
+    // ---------- right-click menu in the text ----------
+    /** Apply fn(lines) to every line the selection touches, then select the result. */
+    function editLines(fn) {
+      const v = editor.value, s0 = editor.selectionStart;
+      let e0 = editor.selectionEnd;
+      if (e0 > s0 && v[e0 - 1] === '\n') e0--;  // a selection ending at a line break doesn't include the next line
+      const start = v.lastIndexOf('\n', s0 - 1) + 1;
+      let end = v.indexOf('\n', e0);
+      if (end === -1) end = v.length;
+      const out = fn(v.slice(start, end).split('\n')).join('\n');
+      editor.setSelectionRange(start, end);
+      insertText(out);
+      editor.setSelectionRange(start, start + out.length);
+    }
+    const setHeading = n => editLines(ls => ls.map(l => (n ? '#'.repeat(n) + ' ' : '') + l.replace(/^#{1,6}\s+/, '')));
+    // Lists and quotes toggle: applied to lines that all have it already, it comes off.
+    const MARK = /^([-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/;
+    function togglePrefix(re, make) {
+      editLines(ls => {
+        const content = ls.filter(l => l.trim());
+        const all = content.length > 0 && content.every(l => re.test(l.trimStart()));
+        let n = 0;
+        return ls.map(l => {
+          if (!l.trim()) return l;
+          const indent = l.match(/^\s*/)[0], body = l.slice(indent.length);
+          return indent + (all ? body.replace(re, '') : make(++n) + body.replace(MARK, ''));
+        });
+      });
+    }
+    const bulletList = () => togglePrefix(/^[-*+]\s+(?!\[[ xX]\])/, () => '- ');
+    const numberedList = () => togglePrefix(/^\d+[.)]\s+/, n => n + '. ');
+    const checklist = () => togglePrefix(/^[-*+]\s+\[[ xX]\]\s+/, () => '- [ ] ');
+    const quote = () => togglePrefix(/^>\s?/, () => '> ');
+    function codeBlock() {
+      const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+      insertText(ownLine('```\n' + (sel || 'code') + '\n```'));
+    }
+    const TABLE = '| Column | Column |\n| ------ | ------ |\n|        |        |';
+    const MERMAID = '```mermaid\nflowchart LR\n    A[Start] --> B[Finish]\n```';
+
+    function clip(cmd) {
+      editor.focus();
+      if (!document.execCommand(cmd)) toast(`Use ${kbd(cmd === 'cut' ? 'Mod+X' : 'Mod+C')} instead`);
+    }
+    async function paste() {
+      editor.focus();
+      try {
+        // Images on the clipboard get uploaded, like pasting with the keyboard.
+        if (navigator.clipboard?.read) {
+          const files = [];
+          for (const it of await navigator.clipboard.read()) {
+            const type = it.types.find(t => t.startsWith('image/'));
+            if (type) files.push(new File([await it.getType(type)], 'pasted.' + type.split('/')[1].split('+')[0], { type }));
+          }
+          if (files.length) return uploadFiles(files);
+        }
+        const text = await navigator.clipboard.readText();
+        if (text) insertText(text);
+      } catch { toast(`The browser blocked that. Use ${kbd('Mod+V')} to paste.`); }
+    }
+
+    editor.addEventListener('contextmenu', e => {
+      if (e.shiftKey) return;  // Shift+right-click: the browser's own menu (spelling suggestions)
+      e.preventDefault();
+      const has = editor.selectionEnd > editor.selectionStart;
+      showMenu(editor, [
+        { label: 'Cut', icon: 'cut', shortcut: 'Mod+X', disabled: !has, action: () => clip('cut') },
+        { label: 'Copy', icon: 'copy', shortcut: 'Mod+C', disabled: !has, action: () => clip('copy') },
+        { label: 'Paste', icon: 'paste', shortcut: 'Mod+V', action: paste },
+        'sep',
+        { label: 'Format', icon: 'bold', submenu: [
+          { label: 'Bold', icon: 'bold', shortcut: 'Mod+B', action: () => wrap('**') },
+          { label: 'Italic', icon: 'italic', shortcut: 'Mod+I', action: () => wrap('_') },
+          { label: 'Strikethrough', icon: 'strike', shortcut: 'Mod+Shift+X', action: () => wrap('~~') },
+          { label: 'Inline code', icon: 'code', shortcut: 'Mod+E', action: () => wrap('`', 'code') },
+          'sep',
+          { label: 'Heading 1', icon: 'heading', shortcut: 'Mod+Alt+1', action: () => setHeading(1) },
+          { label: 'Heading 2', icon: 'heading', shortcut: 'Mod+Alt+2', action: () => setHeading(2) },
+          { label: 'Heading 3', icon: 'heading', shortcut: 'Mod+Alt+3', action: () => setHeading(3) },
+          { label: 'Normal text', shortcut: 'Mod+Alt+0', action: () => setHeading(0) },
+        ] },
+        { label: 'Paragraph', icon: 'list', submenu: [
+          { label: 'Bulleted list', icon: 'list', shortcut: 'Mod+Shift+8', action: bulletList },
+          { label: 'Numbered list', icon: 'list', shortcut: 'Mod+Shift+7', action: numberedList },
+          { label: 'Checklist', icon: 'checklist', shortcut: 'Mod+Shift+9', action: checklist },
+          { label: 'Quote', icon: 'quote', shortcut: 'Mod+Shift+.', action: quote },
+          { label: 'Code block', icon: 'code', action: codeBlock },
+        ] },
+        { label: 'Insert', icon: 'plus', submenu: [
+          { label: 'Link…', icon: 'link', shortcut: 'Mod+K', action: insertLink },
+          { label: 'Image or file…', icon: 'image', action: () => $('file-input').click() },
+          { label: 'From uploads…', icon: 'library', action: openLibrary },
+          'sep',
+          { label: 'Table', icon: 'table', action: () => insertText(ownLine(TABLE)) },
+          { label: 'Divider', icon: 'minus', action: () => insertText(ownLine('---')) },
+          { label: 'Mermaid diagram', icon: 'diagram', action: () => insertText(ownLine(MERMAID)) },
+        ] },
+        'sep',
+        { label: 'Select all', icon: 'selectAll', shortcut: 'Mod+A', action: () => { editor.focus(); editor.select(); } },
+      ], e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null);
+    });
 
     // ---------- start ----------
     (async () => {

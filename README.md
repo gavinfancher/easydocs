@@ -44,8 +44,14 @@ Open http://localhost:8000.
   never changes, so filing it away can't break a doc.
 - **Diagrams**: write a ` ```mermaid ` block and it renders as a diagram. Exported PNG/SVG
   diagrams from Excalidraw, draw.io, etc. work like any image.
-- **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘I italic, ⌘K link.
+- **Right-click** almost anything: docs and folders in the sidebar, uploads, images in the preview,
+  and the text itself (cut/copy/paste, **Format**, **Paragraph** and **Insert** menus).
+  Shift+right-click gives you the browser's own menu, e.g. for spelling suggestions.
+- **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘I italic, ⌘E code, ⌘K link, ⌘⌥1–3 headings,
+  ⌘⇧8 bullets, ⌘⇧7 numbers, ⌘⇧9 checklist, ⌘⇧. quote.
 - **Sidebar**: the button at the top left shows or hides it.
+- **Display size**: the magnifier button at the top right switches between 100%, 110% (default)
+  and 125%. Each browser remembers its own choice.
 
 ## Configuration
 
