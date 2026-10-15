@@ -51,7 +51,15 @@ renderer.image = function (a, b, c) {
 };
 marked.setOptions({ renderer, gfm: true, breaks: false });
 
-mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+// Diagram colors follow the site palette (app.css).
+mermaid.initialize({
+  startOnLoad: false, securityLevel: 'strict', theme: 'base',
+  themeVariables: {
+    darkMode: true, background: '#1b1b1c', fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+    primaryColor: '#272728', primaryBorderColor: '#f6821f', primaryTextColor: '#ececec',
+    secondaryColor: '#2f2f31', tertiaryColor: '#212122', lineColor: '#a8a8ab', textColor: '#ececec',
+  },
+});
 
 let mermaidSeq = 0;
 /** GitHub-style "copy" button in the corner of a code block. */

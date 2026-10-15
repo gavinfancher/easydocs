@@ -1,20 +1,23 @@
 :root {
-  /* Dark-only palette from docs.gavinf.com (homecloud/dash): near-black surfaces in a few
-     steps, hairline borders, one green accent, straight edges. */
-  --bg: #0d0d0d;            /* page and reading area */
-  --bg-soft: #121212;       /* top bar, sidebars */
-  --bg-elv: #161616;        /* cards, inputs, menus, buttons */
-  --bg-hover: #1b1b1b;      /* hover and the current row */
-  --border: #2b2b2b;
-  --text: #ededed;
-  --text-soft: #a1a1a1;
-  --text-faint: #6e6e6e;
-  --accent: #3fd79a;
-  --accent-hover: #35be87;
-  --accent-soft: #102420;
-  --accent-text: #a6e8c8;   /* links on dark backgrounds */
+  /* Dark-only, Cloudflare-style: charcoal greys in a few steps, hairline borders,
+     one orange accent, straight edges.
+     Previous green theme: bg #0d0d0d / #121212 / #161616 / #1b1b1b, border #2b2b2b,
+     accent #3fd79a / #35be87, accent-soft #102420, accent-text #a6e8c8. */
+  --bg: #1b1b1c;            /* page and reading area */
+  --bg-soft: #212122;       /* top bar, sidebars */
+  --bg-elv: #272728;        /* cards, inputs, menus, buttons */
+  --bg-hover: #2f2f31;      /* hover and the current row */
+  --border: #3a3a3c;
+  --text: #ececec;
+  --text-soft: #a8a8ab;
+  --text-faint: #75757a;
+  --accent: #f6821f;        /* Cloudflare orange */
+  --accent-hover: #e06d10;
+  --accent-soft: #352312;
+  --accent-text: #fbad41;   /* links on dark backgrounds */
+  --warn: #f2c94c;          /* unsaved / not used: yellow, so it doesn't read as the accent */
   --danger: #f0716b;
-  --code-bg: #161616;
+  --code-bg: #232324;
   --radius: 2px;
   --topbar: 52px;
   --sidebar: 260px;
@@ -314,7 +317,7 @@ button.danger-fill:hover { filter: brightness(1.08); }
 .lib-used { display: flex; gap: 6px; font-size: 12px; margin-top: 2px; white-space: nowrap; min-width: 0; }
 .lib-used a { overflow: hidden; text-overflow: ellipsis; }
 .lib-used .more { flex: none; color: var(--text-soft); }
-.lib-used.unused { color: #c98a00; }
+.lib-used.unused { color: var(--warn); }
 .lib-actions { display: flex; gap: 4px; padding: 6px 8px 8px; margin-top: auto; }
 .lib-actions button { height: 26px; font-size: 12px; padding: 0 8px; }
 .lib-actions .insert { flex: 1; justify-content: center; }
@@ -341,7 +344,7 @@ button.danger-fill:hover { filter: brightness(1.08); }
 
 /* Buttons: quiet by default; primary is a soft green tint with a green edge */
 button, .btn { background: var(--bg-elv); border-color: var(--border); color: var(--text); transition: background .12s, border-color .12s, color .12s; }
-button:hover, .btn:hover { background: var(--bg-hover); border-color: #3a3a3a; }
+button:hover, .btn:hover { background: var(--bg-hover); border-color: #4a4a4d; }
 button.primary, .btn.primary {
   color: var(--accent); background: var(--accent-soft); font-weight: 500;
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
