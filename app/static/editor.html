@@ -94,7 +94,7 @@
         </div>
         <div class="tools">
           <button id="link-btn" data-icon="link" title="Insert a link (⌘K)">Link</button>
-          <button id="code-btn" data-icon="code" title="Code block (⌘⇧E)">Code</button>
+          <button id="code-btn" data-icon="code" title="Code block (⌘I)">Code</button>
           <button id="image-btn" data-icon="image" title="Upload an image or file. You can also paste or drag one in.">Image</button>
           <button id="library-btn" data-icon="library" title="Insert something you've already uploaded">From uploads</button>
           <input type="file" id="file-input" multiple hidden>
@@ -431,10 +431,10 @@
     editor.addEventListener('keydown', e => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === 'b') { e.preventDefault(); wrap('**'); }
-      else if (mod && e.key === 'i') { e.preventDefault(); wrap('_'); }
+      else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyI') { e.preventDefault(); codeBlock(); }
+      else if (mod && e.shiftKey && e.code === 'KeyI') { e.preventDefault(); wrap('_'); }
       else if (mod && e.key === 'k') { e.preventDefault(); insertLink(); }
       else if (mod && !e.shiftKey && e.key === 'e') { e.preventDefault(); wrap('`', 'code'); }
-      else if (mod && e.shiftKey && e.code === 'KeyE') { e.preventDefault(); codeBlock(); }
       else if (mod && e.shiftKey && e.code === 'KeyX') { e.preventDefault(); wrap('~~'); }
       else if (mod && e.altKey && /^Digit[0-3]$/.test(e.code)) { e.preventDefault(); setHeading(+e.code.slice(5)); }
       else if (mod && e.shiftKey && e.code === 'Digit8') { e.preventDefault(); bulletList(); }
@@ -554,8 +554,13 @@
     const checklist = () => togglePrefix(/^[-*+]\s+\[[ xX]\]\s+/, () => '- [ ] ');
     const quote = () => togglePrefix(/^>\s?/, () => '> ');
     function codeBlock() {
-      const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
-      insertText(ownLine('```\n' + (sel || 'code') + '\n```'));
+      const start = editor.selectionStart;
+      const sel = editor.value.slice(start, editor.selectionEnd);
+      const text = ownLine('```\n' + sel + '\n```');
+      insertText(text);
+      // Leave the cursor inside the block: on its empty line, or after the wrapped text.
+      const at = start + text.indexOf('```\n') + 4 + sel.length;
+      editor.setSelectionRange(at, at);
     }
     const TABLE = '| Column | Column |\n| ------ | ------ |\n|        |        |';
     const MERMAID = '```mermaid\nflowchart LR\n    A[Start] --> B[Finish]\n```';
@@ -592,7 +597,7 @@
         'sep',
         { label: 'Format', icon: 'bold', submenu: [
           { label: 'Bold', icon: 'bold', shortcut: 'Mod+B', action: () => wrap('**') },
-          { label: 'Italic', icon: 'italic', shortcut: 'Mod+I', action: () => wrap('_') },
+          { label: 'Italic', icon: 'italic', shortcut: 'Mod+Shift+I', action: () => wrap('_') },
           { label: 'Strikethrough', icon: 'strike', shortcut: 'Mod+Shift+X', action: () => wrap('~~') },
           { label: 'Inline code', icon: 'code', shortcut: 'Mod+E', action: () => wrap('`', 'code') },
           'sep',
@@ -606,7 +611,7 @@
           { label: 'Numbered list', icon: 'list', shortcut: 'Mod+Shift+7', action: numberedList },
           { label: 'Checklist', icon: 'checklist', shortcut: 'Mod+Shift+9', action: checklist },
           { label: 'Quote', icon: 'quote', shortcut: 'Mod+Shift+.', action: quote },
-          { label: 'Code block', icon: 'code', shortcut: 'Mod+Shift+E', action: codeBlock },
+          { label: 'Code block', icon: 'code', shortcut: 'Mod+I', action: codeBlock },
         ] },
         { label: 'Insert', icon: 'plus', submenu: [
           { label: 'Link…', icon: 'link', shortcut: 'Mod+K', action: insertLink },

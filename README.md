@@ -46,8 +46,8 @@ Open http://localhost:8000.
 - **Right-click** almost anything: docs and folders in the sidebar, uploads, images in the preview,
   and the text itself (cut/copy/paste, **Format**, **Paragraph** and **Insert** menus).
   Shift+right-click gives you the browser's own menu, e.g. for spelling suggestions.
-- **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘I italic, ⌘E code, ⌘K link, ⌘⌥1–3 headings,
-  ⌘⇧8 bullets, ⌘⇧7 numbers, ⌘⇧9 checklist, ⌘⇧. quote, ⌘⇧E code block.
+- **Shortcuts**: ⌘/Ctrl+S save, ⌘B bold, ⌘⇧I italic, ⌘E inline code, ⌘I code block, ⌘K link, ⌘⌥1–3 headings,
+  ⌘⇧8 bullets, ⌘⇧7 numbers, ⌘⇧9 checklist, ⌘⇧. quote.
 - **Sidebar**: the button at the top left shows or hides it.
 
 ## Configuration
