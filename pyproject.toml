@@ -1,5 +1,5 @@
 [project]
-name = "mykb"
+name = "mydocs"
 version = "0.1.0"
 description = "Self-hosted markdown docs with a web editor"
 readme = "README.md"
