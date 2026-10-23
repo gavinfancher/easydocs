@@ -52,6 +52,7 @@
     .placeholder { margin: auto; text-align: center; color: var(--text-soft); padding: 40px; }
     .placeholder h2 { color: var(--text); font-weight: 600; }
     body.preview-hidden #preview-pane { display: none; }
+    #toggle-preview[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); }
     body.editor-hidden #editor { display: none; }
     @media (max-width: 800px) {
       body:not(.editor-hidden) #preview-pane { display: none; }
@@ -253,9 +254,16 @@
       'sep',
       { label: 'Delete', icon: 'trash', danger: true, action: () => deleteDoc(current) },
     ]);
-    $('toggle-preview').onclick = () => {
-      if (window.innerWidth <= 800) document.body.classList.toggle('editor-hidden');
-      else document.body.classList.toggle('preview-hidden');
+    // Hiding the preview is remembered, so a narrow split-screen window stays editor-only.
+    const previewBtn = $('toggle-preview');
+    const syncPreviewBtn = () => previewBtn.setAttribute('aria-pressed', !document.body.classList.contains('preview-hidden'));
+    try { if (localStorage.getItem('easydocs.preview') === 'hidden') document.body.classList.add('preview-hidden'); } catch { }
+    syncPreviewBtn();
+    previewBtn.onclick = () => {
+      if (window.innerWidth <= 800) { document.body.classList.toggle('editor-hidden'); return; }
+      const hidden = document.body.classList.toggle('preview-hidden');
+      try { localStorage.setItem('easydocs.preview', hidden ? 'hidden' : 'shown'); } catch { }
+      syncPreviewBtn();
     };
 
     // Back / forward buttons.
