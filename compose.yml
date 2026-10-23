@@ -1,28 +1,28 @@
-# Local dev: the app plus its own Postgres. There's no login locally (MYDOCS_LOCAL=1), so the
+# Local dev: the app plus its own Postgres. There's no login locally (EASYDOCS_LOCAL=1), so the
 # ports only listen on this machine. Data persists in the pgdata volume (`docker compose down -v` wipes it).
 services:
   postgres:
     image: postgres:18.4
     environment:
-      POSTGRES_USER: mydocs
-      POSTGRES_PASSWORD: mydocs
+      POSTGRES_USER: easydocs
+      POSTGRES_PASSWORD: easydocs
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "mydocs"]
+      test: ["CMD", "pg_isready", "-U", "easydocs"]
       interval: 2s
       retries: 15
 
-  mydocs:
+  easydocs:
     build: .
     depends_on:
       postgres: { condition: service_healthy }
     ports:
-      - "127.0.0.1:${MYDOCS_PORT:-8000}:8000"   # MYDOCS_PORT=8010 make dev, if 8000 is taken
+      - "127.0.0.1:${EASYDOCS_PORT:-8000}:8000"   # EASYDOCS_PORT=8010 make dev, if 8000 is taken
     environment:
-      MYDOCS_LOCAL: "1"
-      MYDOCS_TITLE: "My Docs"
-      MYDOCS_DATABASE_URL: postgresql://mydocs:mydocs@postgres/mydocs
+      EASYDOCS_LOCAL: "1"
+      EASYDOCS_TITLE: "easydocs"
+      EASYDOCS_DATABASE_URL: postgresql://easydocs:easydocs@postgres/easydocs
 
 volumes:
   pgdata:

@@ -182,9 +182,9 @@ def test_login_and_logout(anon):
 
 
 def test_logout_ends_the_session_server_side(client):
-    token = client.cookies.get("mydocs_session")
+    token = client.cookies.get("easydocs_session")
     client.post("/admin/logout")
-    client.cookies.set("mydocs_session", token)  # someone kept a copy of the cookie
+    client.cookies.set("easydocs_session", token)  # someone kept a copy of the cookie
     assert client.get("/admin/api/uploads").status_code == 401
 
 

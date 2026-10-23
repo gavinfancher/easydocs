@@ -9,8 +9,7 @@ function slugify(s) {
 }
 
 function prettyName(s) {
-  const t = s.replace(/^\d+[-_ ]/, '').replace(/[-_]+/g, ' ').trim();
-  return t.charAt(0).toUpperCase() + t.slice(1);
+  return s.replace(/^\d+[-_ ]/, '').replace(/[-_]+/g, ' ').trim();
 }
 
 // ---------- display size ----------
@@ -121,11 +120,11 @@ const jsonOpts = (method, body) => ({
 
 // Remembers which folders are collapsed across page loads.
 const collapsed = (() => {
-  try { return new Set(JSON.parse(localStorage.getItem('mydocs.collapsed') || '[]')); }
+  try { return new Set(JSON.parse(localStorage.getItem('easydocs.collapsed') || '[]')); }
   catch { return new Set(); }
 })();
 function saveCollapsed() {
-  try { localStorage.setItem('mydocs.collapsed', JSON.stringify([...collapsed])); } catch { }
+  try { localStorage.setItem('easydocs.collapsed', JSON.stringify([...collapsed])); } catch { }
 }
 
 const ICONS = {
@@ -184,11 +183,11 @@ document.querySelectorAll('[data-icon]').forEach(el => el.insertAdjacentHTML('af
 (() => {
   const btn = document.getElementById('sidebar-toggle');
   if (!btn) return;
-  try { if (localStorage.getItem('mydocs.sidebar') === 'collapsed') document.body.classList.add('sidebar-collapsed'); } catch { }
+  try { if (localStorage.getItem('easydocs.sidebar') === 'collapsed') document.body.classList.add('sidebar-collapsed'); } catch { }
   btn.addEventListener('click', () => {
     if (window.matchMedia('(max-width: 800px)').matches) { document.body.classList.toggle('nav-open'); return; }
     const c = document.body.classList.toggle('sidebar-collapsed');
-    try { localStorage.setItem('mydocs.sidebar', c ? 'collapsed' : 'open'); } catch { }
+    try { localStorage.setItem('easydocs.sidebar', c ? 'collapsed' : 'open'); } catch { }
   });
 })();
 

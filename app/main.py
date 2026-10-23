@@ -1,11 +1,11 @@
-"""mydocs — a small self-hosted markdown docs site.
+"""easydocs — a small self-hosted markdown docs site.
 
 Docs, folders, settings and uploaded files all live in Postgres (see store.py).
 Uploads are referenced by absolute URLs (/uploads/<name>), so moving a doc never breaks
 its images. Upload folders are only labels, so filing an upload never changes its URL.
 
 Reading is public. Everything under /admin needs the admin password (see auth.py), except
-with MYDOCS_LOCAL=1, for local dev (see compose.yml).
+with EASYDOCS_LOCAL=1, for local dev (see compose.yml).
 """
 
 import os
@@ -24,11 +24,11 @@ from pydantic import BaseModel
 
 from app import auth, store
 
-SITE_TITLE = os.environ.get("MYDOCS_TITLE", "Docs")
-LOCAL = os.environ.get("MYDOCS_LOCAL") == "1"
+SITE_TITLE = os.environ.get("EASYDOCS_TITLE", "easydocs")
+LOCAL = os.environ.get("EASYDOCS_LOCAL") == "1"
 LOGIN_REQUIRED = not LOCAL
 if LOGIN_REQUIRED and not auth.PASSWORD_HASH:
-    raise RuntimeError("Set MYDOCS_ADMIN_PASSWORD_HASH (make one with: uv run python -m app.auth)")
+    raise RuntimeError("Set EASYDOCS_ADMIN_PASSWORD_HASH (make one with: uv run python -m app.auth)")
 
 MAX_DOC_BYTES = 350_000
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="mydocs", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app = FastAPI(title="easydocs", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
 @app.middleware("http")

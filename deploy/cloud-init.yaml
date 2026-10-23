@@ -1,6 +1,6 @@
 #cloud-config
-# User data for the mydocs VM on Proxmox (see README: "Running it on the homelab").
-hostname: mydocs
+# User data for the easydocs VM on Proxmox (see README: "Running it on the homelab").
+hostname: easydocs
 users:
   - name: ubuntu
     shell: /bin/bash
@@ -16,4 +16,4 @@ packages:
 runcmd:
   - usermod -aG docker ubuntu
   - systemctl enable --now qemu-guest-agent docker
-  - install -d -o ubuntu -g ubuntu /opt/mydocs
+  - install -d -o ubuntu -g ubuntu /opt/easydocs

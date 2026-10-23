@@ -1,6 +1,6 @@
-"""Copy a data/ folder from the old file-based mydocs into Postgres.
+"""Copy a data/ folder from the old file-based easydocs into Postgres.
 
-    MYDOCS_DATABASE_URL=postgresql://... uv run python scripts/import_data.py data
+    EASYDOCS_DATABASE_URL=postgresql://... uv run python scripts/import_data.py data
 
 (or `make import DB=postgresql://...`). Safe to run again: existing items are overwritten.
 """
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-os.environ.setdefault("MYDOCS_LOCAL", "1")  # only borrowing helpers from main; no server runs here
+os.environ.setdefault("EASYDOCS_LOCAL", "1")  # only borrowing helpers from main; no server runs here
 
 from app import store  # noqa: E402
 from app.main import CONTENT_TYPES, HOME_DEFAULTS, doc_item, parents  # noqa: E402

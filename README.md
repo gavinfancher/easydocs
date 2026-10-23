@@ -1,6 +1,6 @@
-# mydocs
+# easydocs
 
-A small self-hosted markdown docs site, with a web editor. Live at https://mydocs.gavinf.com.
+A small self-hosted markdown docs site, with a web editor. Live at https://easydocs.gavinf.com.
 
 - **`/`**: read-only docs site: a home page, then sidebar, search and diagrams
 - **`/admin/`**: admin panel. Organize docs and folders, and manage uploads
@@ -9,9 +9,9 @@ A small self-hosted markdown docs site, with a web editor. Live at https://mydoc
 ## How it runs
 
 ```
- browser ──► Cloudflare (mydocs.gavinf.com, HTTPS)
-               └─ tunnel ──► cloudflared ──► mydocs app (FastAPI)  ── Proxmox VM 506, mydocs.ad.gavinf.com
-                                                └──► Postgres, database "mydocs" ── postgres.ad.gavinf.com
+ browser ──► Cloudflare (easydocs.gavinf.com, HTTPS)
+               └─ tunnel ──► cloudflared ──► easydocs app (FastAPI)  ── Proxmox VM 506, easydocs.ad.gavinf.com
+                                                └──► Postgres, database "easydocs" ── postgres.ad.gavinf.com
 ```
 
 The tunnel dials out from the VM, so nothing on the network is opened to the internet. Postgres holds
@@ -37,7 +37,7 @@ make deploy        # rsync to the VM, rebuild and restart the containers
 make logs          # tail the app and tunnel logs
 ```
 
-Secrets live only on the VM, in `/opt/mydocs/deploy/.env` (mode 600): the database URL, the admin
+Secrets live only on the VM, in `/opt/easydocs/deploy/.env` (mode 600): the database URL, the admin
 password hash and the tunnel token. To change the admin password, run this in a terminal (it asks for
 the new password twice, then updates the VM and restarts the app):
 
@@ -45,29 +45,29 @@ the new password twice, then updates the VM and restarts the app):
 make set-password
 ```
 
-The tunnel is `mydocs` in Cloudflare Zero Trust → Networks → Tunnels. Its public hostname
-`mydocs.gavinf.com` points at `http://mydocs:8000`.
+The tunnel is `easydocs` in Cloudflare Zero Trust → Networks → Tunnels. Its public hostname
+`easydocs.gavinf.com` points at `http://easydocs:8000`.
 
 ### Rebuilding the VM
 
 On the Proxmox host (10.0.4.10), with `deploy/cloud-init.yaml` copied to
-`/var/lib/vz/snippets/mydocs-user.yaml`:
+`/var/lib/vz/snippets/easydocs-user.yaml`:
 
 ```sh
-qm create 506 --name mydocs --memory 2048 --cores 2 --cpu host --ostype l26 --agent enabled=1 --onboot 1 \
+qm create 506 --name easydocs --memory 2048 --cores 2 --cpu host --ostype l26 --agent enabled=1 --onboot 1 \
   --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --serial0 socket --vga serial0
 qm set 506 --scsi0 local-lvm:0,import-from=/var/lib/vz/template/iso/ubuntu-26.04-server-cloudimg-amd64.img
 qm resize 506 scsi0 16G
-qm set 506 --ide2 local-lvm:cloudinit --boot order=scsi0 --ipconfig0 ip=dhcp --cicustom user=local:snippets/mydocs-user.yaml
+qm set 506 --ide2 local-lvm:cloudinit --boot order=scsi0 --ipconfig0 ip=dhcp --cicustom user=local:snippets/easydocs-user.yaml
 qm start 506
 ```
 
-Then write `/opt/mydocs/deploy/.env` (see the top of `deploy/compose.yml`) and run `make deploy HOST=ubuntu@<ip>`.
+Then write `/opt/easydocs/deploy/.env` (see the top of `deploy/compose.yml`) and run `make deploy HOST=ubuntu@<ip>`.
 
 ### Local dev
 
 ```sh
-make dev           # http://localhost:8000 (MYDOCS_PORT=8010 make dev if 8000 is taken)
+make dev           # http://localhost:8000 (EASYDOCS_PORT=8010 make dev if 8000 is taken)
 make test          # starts a throwaway postgres:18.4 on 127.0.0.1:5433 the first time
 ```
 

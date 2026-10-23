@@ -1,18 +1,18 @@
-# Production, on the mydocs VM (`make deploy` copies the repo to /opt/mydocs and runs this).
-# The app talks to Postgres on postgres.ad.gavinf.com; cloudflared carries mydocs.gavinf.com to it,
+# Production, on the easydocs VM (`make deploy` copies the repo to /opt/easydocs and runs this).
+# The app talks to Postgres on postgres.ad.gavinf.com; cloudflared carries easydocs.gavinf.com to it,
 # so nothing listens on the network. Secrets are in deploy/.env on the VM, never in git:
 #
-#   MYDOCS_DATABASE_URL=postgresql://mydocs:<password>@postgres.ad.gavinf.com/mydocs
-#   MYDOCS_ADMIN_PASSWORD_HASH=scrypt:...      (uv run python -m app.auth)
+#   EASYDOCS_DATABASE_URL=postgresql://easydocs:<password>@postgres.ad.gavinf.com/easydocs
+#   EASYDOCS_ADMIN_PASSWORD_HASH=scrypt:...      (uv run python -m app.auth)
 #   TUNNEL_TOKEN=...                           (Cloudflare Zero Trust → Networks → Tunnels)
 services:
-  mydocs:
+  easydocs:
     build: ..
     restart: unless-stopped
     environment:
-      MYDOCS_TITLE: "My Docs"
-      MYDOCS_DATABASE_URL: ${MYDOCS_DATABASE_URL:?}
-      MYDOCS_ADMIN_PASSWORD_HASH: ${MYDOCS_ADMIN_PASSWORD_HASH:?}
+      EASYDOCS_TITLE: "easydocs"
+      EASYDOCS_DATABASE_URL: ${EASYDOCS_DATABASE_URL:?}
+      EASYDOCS_ADMIN_PASSWORD_HASH: ${EASYDOCS_ADMIN_PASSWORD_HASH:?}
     ports:
       - "127.0.0.1:8000:8000"   # for curl on the VM itself; the internet comes in via cloudflared
     healthcheck:
@@ -22,7 +22,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2026.10.0
     restart: unless-stopped
-    command: tunnel --no-autoupdate run   # the tunnel's public hostname points at http://mydocs:8000
+    command: tunnel --no-autoupdate run   # the tunnel's public hostname points at http://easydocs:8000
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?}
-    depends_on: [mydocs]
+    depends_on: [easydocs]

@@ -1,6 +1,6 @@
 """Sign-in for the admin pages: one admin password, and a session cookie once you've given it.
 
-The password is only kept as a scrypt hash, in MYDOCS_ADMIN_PASSWORD_HASH. Make one with
+The password is only kept as a scrypt hash, in EASYDOCS_ADMIN_PASSWORD_HASH. Make one with
 
     uv run python -m app.auth
 
@@ -18,8 +18,8 @@ from collections import defaultdict, deque
 
 from app import store
 
-PASSWORD_HASH = os.environ.get("MYDOCS_ADMIN_PASSWORD_HASH", "")
-COOKIE = "mydocs_session"
+PASSWORD_HASH = os.environ.get("EASYDOCS_ADMIN_PASSWORD_HASH", "")
+COOKIE = "easydocs_session"
 SESSION_DAYS = 30
 SCRYPT = {"n": 2**15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024}
 

@@ -22,7 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-DATABASE_URL = os.environ.get("MYDOCS_DATABASE_URL", "postgresql://mydocs@localhost/mydocs")
+DATABASE_URL = os.environ.get("EASYDOCS_DATABASE_URL", "postgresql://easydocs@localhost/easydocs")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (

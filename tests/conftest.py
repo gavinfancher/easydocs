@@ -3,14 +3,14 @@ import os
 import pytest
 
 # Tests need a Postgres to talk to; `make test` starts one in Docker. They wipe its tables.
-os.environ["MYDOCS_DATABASE_URL"] = os.environ.get(
-    "MYDOCS_TEST_DATABASE_URL", "postgresql://postgres:test@localhost:5433/postgres")
-os.environ.pop("MYDOCS_LOCAL", None)
+os.environ["EASYDOCS_DATABASE_URL"] = os.environ.get(
+    "EASYDOCS_TEST_DATABASE_URL", "postgresql://postgres:test@localhost:5433/postgres")
+os.environ.pop("EASYDOCS_LOCAL", None)
 
 from app import auth  # noqa: E402
 
 PASSWORD = "correct horse battery staple"
-auth.PASSWORD_HASH = os.environ["MYDOCS_ADMIN_PASSWORD_HASH"] = auth.hash_password(PASSWORD)
+auth.PASSWORD_HASH = os.environ["EASYDOCS_ADMIN_PASSWORD_HASH"] = auth.hash_password(PASSWORD)
 
 from fastapi.testclient import TestClient  # noqa: E402
 

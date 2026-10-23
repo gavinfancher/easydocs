@@ -350,7 +350,7 @@ function uploadFolderOptions(folders, exclude = null) {
  *   storageKey: remembers the open folder between visits
  */
 function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = null, docLink = editorUrl,
-                         onLoad = () => { }, onRename = () => { }, storageKey = 'mydocs.uploadFolder' }) {
+                         onLoad = () => { }, onRename = () => { }, storageKey = 'easydocs.uploadFolder' }) {
   let items = [], folders = [];
   let cur = (() => { try { const v = localStorage.getItem(storageKey); return v === null ? ALL : JSON.parse(v); } catch { return ALL; } })();
   const setCur = f => { cur = f; try { localStorage.setItem(storageKey, JSON.stringify(f)); } catch { } render(); };
@@ -606,7 +606,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
       const f = target(e);
       clear();
       if (f === undefined) return;
-      if (!e.dataTransfer.types.includes('application/x-mydocs-upload') && !e.dataTransfer.types.includes('Files')) return;
+      if (!e.dataTransfer.types.includes('application/x-easydocs-upload') && !e.dataTransfer.types.includes('Files')) return;
       e.preventDefault(); e.stopPropagation();
       e.target.closest('[data-folder]').classList.add('drop-target');
     });
@@ -617,14 +617,14 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
       if (f === undefined) return;
       e.preventDefault(); e.stopPropagation();
       dropZone?.classList.remove('drag-over');
-      const name = e.dataTransfer.getData('application/x-mydocs-upload');
+      const name = e.dataTransfer.getData('application/x-easydocs-upload');
       if (name) { if (items.find(it => it.name === name)?.folder !== f) moveFiles([name], f); }
       else if (e.dataTransfer.files.length) upload([...e.dataTransfer.files], f);
     });
   }
   grid.addEventListener('dragstart', e => {
     const card = e.target.closest('.lib-card'); if (!card) return;
-    e.dataTransfer.setData('application/x-mydocs-upload', card.dataset.name);
+    e.dataTransfer.setData('application/x-easydocs-upload', card.dataset.name);
     e.dataTransfer.effectAllowed = 'move';
     card.classList.add('dragging');
   });
