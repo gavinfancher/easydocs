@@ -1,42 +1,45 @@
-"""mydocs — a tiny self-hosted markdown docs site.
+"""mydocs — a small self-hosted markdown docs site.
 
-Docs are plain .md files under DATA/docs (folders = sections).
-Uploaded images/files live under DATA/uploads and are referenced by absolute
-URLs (/uploads/<name>), so moving a doc never breaks its images. Upload folders
-are labels in DATA/upload-folders.json, so filing an upload never changes its URL.
+Docs, folders, settings and uploaded files all live in Postgres (see store.py).
+Uploads are referenced by absolute URLs (/uploads/<name>), so moving a doc never breaks
+its images. Upload folders are only labels, so filing an upload never changes its URL.
+
+Reading is public. Everything under /admin needs the admin password (see auth.py), except
+with MYDOCS_LOCAL=1, for local dev (see compose.yml).
 """
 
-import json
-import logging
 import os
 import re
-import shutil
+import time
 import uuid
-from pathlib import Path
+from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-log = logging.getLogger("uvicorn.error")
-
-DATA_DIR = Path(os.environ.get("MYDOCS_DATA", "data")).resolve()
-DOCS_DIR = DATA_DIR / "docs"
-UPLOADS_DIR = DATA_DIR / "uploads"
-STATIC_DIR = Path(__file__).parent / "static"
+from app import auth, store
 
 SITE_TITLE = os.environ.get("MYDOCS_TITLE", "Docs")
+LOCAL = os.environ.get("MYDOCS_LOCAL") == "1"
+LOGIN_REQUIRED = not LOCAL
+if LOGIN_REQUIRED and not auth.PASSWORD_HASH:
+    raise RuntimeError("Set MYDOCS_ADMIN_PASSWORD_HASH (make one with: uv run python -m app.auth)")
 
+MAX_DOC_BYTES = 350_000
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
-ALLOWED_UPLOADS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif",
-    ".pdf", ".mp4", ".webm", ".zip", ".txt", ".csv",
+CONTENT_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".svg": "image/svg+xml", ".avif": "image/avif",
+    ".pdf": "application/pdf", ".mp4": "video/mp4", ".webm": "video/webm",
+    ".zip": "application/zip", ".txt": "text/plain", ".csv": "text/csv",
 }
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
 
-DOCS_DIR.mkdir(parents=True, exist_ok=True)
-HOME_FILE = DATA_DIR / "home.json"
 HOME_DEFAULTS = {
     "heading": SITE_TITLE,
     "tagline": "Guides, notes and reference — all in one place.",
@@ -44,7 +47,6 @@ HOME_DEFAULTS = {
     "show_sections": True,
     "show_recent": True,
 }
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 WELCOME = """# Welcome
 
@@ -70,10 +72,15 @@ Use folders like `guides/setup` when creating a doc. Folders show up as
 sections in the sidebar. The first `# Heading` in a doc is its title.
 """
 
-if not any(DOCS_DIR.iterdir()):
-    (DOCS_DIR / "index.md").write_text(WELCOME)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    store.init_schema()
+    if not store.any_with_prefix("DOC", ""):
+        store.put(doc_item("index", WELCOME))
+    yield
 
-app = FastAPI(title="mydocs", docs_url=None, redoc_url=None, openapi_url=None)
+
+app = FastAPI(title="mydocs", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -88,16 +95,24 @@ async def cache_headers(request: Request, call_next):
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
-# ---------- no login: block cross-site writes ----------
+
+def same_origin(request: Request) -> bool:
+    """Was this sent by our own pages? Browsers always say where a POST/PUT/DELETE came from."""
+    source = request.headers.get("origin") or request.headers.get("referer") or ""
+    return urlsplit(source).netloc == request.headers.get("host")
+
 
 @app.middleware("http")
-async def same_origin_writes(request: Request, call_next):
-    # There's no login, so stop other websites' pages from changing things via the
-    # visitor's browser: a write from a page must come from this site.
-    origin = request.headers.get("origin")
-    if (request.method not in ("GET", "HEAD", "OPTIONS") and origin
-            and origin.split("://", 1)[-1] != request.headers.get("host")):
-        return JSONResponse({"detail": "Cross-site request blocked"}, status_code=403)
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if LOGIN_REQUIRED and (path == "/admin" or path.startswith("/admin/")) and path != "/admin/login":
+        if not await run_in_threadpool(auth.valid_session, request.cookies.get(auth.COOKIE)):
+            if path.startswith("/admin/api/"):
+                return JSONResponse({"detail": "Sign in first"}, status_code=401)
+            return RedirectResponse("/admin/login?next=" + quote(path), status_code=303)
+        # The cookie is SameSite=Strict already; this is a second lock against cross-site requests.
+        if request.method not in ("GET", "HEAD") and not same_origin(request):
+            return JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
     return await call_next(request)
 
 
@@ -111,44 +126,51 @@ def clean_rel(rel: str) -> str:
     return "/".join(parts)
 
 
-def safe_join(rel: str) -> Path:
-    p = (DOCS_DIR / rel).resolve()
-    if DOCS_DIR not in p.parents:
-        raise HTTPException(400, "Invalid path")
-    return p
+def parents(path: str) -> list[str]:
+    """'a/b/c' -> ['a', 'a/b']"""
+    parts = path.split("/")
+    return ["/".join(parts[:i]) for i in range(1, len(parts))]
 
 
-def doc_file(rel: str) -> Path:
-    return safe_join(clean_rel(rel) + ".md")
+def title_of(path: str, content: str) -> str:
+    for line in content.splitlines():
+        m = re.match(r"#\s+(.+)", line)
+        if m:
+            return m.group(1).strip()
+    return path.rpartition("/")[2].replace("-", " ").replace("_", " ").strip().capitalize()
 
 
-def folder_dir(rel: str) -> Path:
-    return safe_join(clean_rel(rel))
+def doc_item(path: str, content: str, updated: int | None = None) -> dict:
+    if len(content.encode("utf-8")) > MAX_DOC_BYTES:
+        raise HTTPException(413, "Doc too large (max 350 KB) — split it up, or move big content into uploads")
+    return {"pk": "DOC", "sk": path, "title": title_of(path, content), "content": content,
+            "updated": updated or int(time.time())}
 
 
-def title_of(path: Path) -> str:
-    try:
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                m = re.match(r"#\s+(.+)", line)
-                if m:
-                    return m.group(1).strip()
-    except OSError:
-        pass
-    return path.stem.replace("-", " ").replace("_", " ").strip().capitalize()
+def ensure_folders(paths: list[str]) -> None:
+    store.batch_write(puts=[{"pk": "FOLDER", "sk": p} for p in paths])
 
 
-def build_tree(d: Path) -> list[dict]:
-    items = []
-    for child in sorted(d.iterdir(), key=lambda c: (c.is_file(), c.name.lower())):
-        if child.name.startswith("."):
-            continue
-        rel = child.relative_to(DOCS_DIR).as_posix()
-        if child.is_dir():
-            items.append({"type": "folder", "name": child.name, "path": rel, "children": build_tree(child)})
-        elif child.suffix == ".md":
-            items.append({"type": "doc", "name": child.stem, "path": rel[:-3], "title": title_of(child)})
-    return items
+def build_tree(folders: list[str], docs: list[dict]) -> list[dict]:
+    root: list[dict] = []
+    children = {"": root}
+
+    def children_of(path: str) -> list[dict]:
+        if path not in children:
+            parent, _, name = path.rpartition("/")
+            node = {"type": "folder", "name": name, "path": path, "children": []}
+            children_of(parent).append(node)
+            children[path] = node["children"]
+        return children[path]
+
+    for f in folders:
+        children_of(f)
+    for d in docs:
+        parent, _, name = d["sk"].rpartition("/")
+        children_of(parent).append({"type": "doc", "name": name, "path": d["sk"], "title": d["title"]})
+    for items in children.values():
+        items.sort(key=lambda c: (c["type"] == "doc", c["name"].lower()))
+    return root
 
 
 # ---------- public API ----------
@@ -160,33 +182,28 @@ def config():
 
 @app.get("/api/tree")
 def tree():
-    return build_tree(DOCS_DIR)
+    folders = [f["sk"] for f in store.query("FOLDER", fields=["sk"])]
+    return build_tree(folders, store.query("DOC", fields=["sk", "title"]))
 
 
 @app.get("/api/docs/{rel:path}")
 def get_doc(rel: str):
-    f = doc_file(rel)
-    if not f.is_file():
+    doc = store.get("DOC", clean_rel(rel))
+    if not doc:
         raise HTTPException(404, "Doc not found")
-    return {"path": clean_rel(rel), "title": title_of(f), "content": f.read_text(encoding="utf-8")}
+    return {"path": doc["sk"], "title": doc["title"], "content": doc["content"]}
 
 
 def load_home() -> dict:
-    try:
-        saved = json.loads(HOME_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        saved = {}
+    saved = store.get("SITE", "HOME") or {}
     return {k: saved.get(k, v) for k, v in HOME_DEFAULTS.items()}
 
 
 @app.get("/api/home")
 def home():
     """Landing page settings plus the most recently edited docs."""
-    files = sorted((f for f in DOCS_DIR.rglob("*.md")
-                    if not any(p.startswith(".") for p in f.relative_to(DOCS_DIR).parts)),
-                   key=lambda f: f.stat().st_mtime, reverse=True)
-    recent = [{"path": f.relative_to(DOCS_DIR).as_posix()[:-3], "title": title_of(f),
-               "modified": int(f.stat().st_mtime)} for f in files[:6]]
+    docs = sorted(store.query("DOC", fields=["sk", "title", "updated"]), key=lambda d: d["updated"], reverse=True)
+    recent = [{"path": d["sk"], "title": d["title"], "modified": int(d["updated"])} for d in docs[:6]]
     return {**load_home(), "recent": recent}
 
 
@@ -196,11 +213,8 @@ def search(q: str):
     if not q:
         return []
     results = []
-    for f in sorted(DOCS_DIR.rglob("*.md")):
-        if any(part.startswith(".") for part in f.relative_to(DOCS_DIR).parts):
-            continue
-        text = f.read_text(encoding="utf-8")
-        title = title_of(f)
+    for doc in store.query("DOC", fields=["sk", "title", "content"]):
+        text, title = doc["content"], doc["title"]
         idx = text.lower().find(q)
         if idx == -1 and q not in title.lower():
             continue
@@ -208,7 +222,7 @@ def search(q: str):
         if idx != -1:
             start = max(0, idx - 60)
             snippet = ("…" if start else "") + text[start: idx + 100].replace("\n", " ") + "…"
-        results.append({"path": f.relative_to(DOCS_DIR).as_posix()[:-3], "title": title, "snippet": snippet})
+        results.append({"path": doc["sk"], "title": title, "snippet": snippet})
     return results[:50]
 
 
@@ -242,78 +256,91 @@ class HomeBody(BaseModel):
 
 @app.post("/admin/api/docs")
 def create_doc(body: CreateBody):
-    f = doc_file(body.path)
-    if f.exists():
+    path = clean_rel(body.path)
+    try:
+        store.put(doc_item(path, body.content), new=True)
+    except store.Exists:
         raise HTTPException(409, "A doc with that path already exists")
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(body.content, encoding="utf-8")
-    return {"path": clean_rel(body.path)}
+    ensure_folders(parents(path))
+    return {"path": path}
 
 
 @app.put("/admin/api/docs/{rel:path}")
 def save_doc(rel: str, body: DocBody):
-    f = doc_file(rel)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(body.content, encoding="utf-8")
-    return {"path": clean_rel(rel), "title": title_of(f)}
+    path = clean_rel(rel)
+    item = doc_item(path, body.content)
+    store.put(item)
+    ensure_folders(parents(path))
+    return {"path": path, "title": item["title"]}
 
 
 @app.delete("/admin/api/docs/{rel:path}")
 def delete_doc(rel: str):
-    f = doc_file(rel)
-    if not f.is_file():
+    try:
+        store.delete("DOC", clean_rel(rel))
+    except store.Missing:
         raise HTTPException(404, "Doc not found")
-    f.unlink()
     return {"ok": True}
 
 
 @app.post("/admin/api/move")
 def move(body: MoveBody):
     """Rename/move a doc or a folder."""
-    src_doc, dst_doc = doc_file(body.src), doc_file(body.dst)
-    if src_doc.is_file():
-        src, dst = src_doc, dst_doc
-    else:
-        src, dst = folder_dir(body.src), folder_dir(body.dst)
-        if not src.is_dir():
-            raise HTTPException(404, "Not found")
-        if src in dst.parents:
-            raise HTTPException(400, "Can't move a folder into itself")
-    if dst.exists():
+    src, dst = clean_rel(body.src), clean_rel(body.dst)
+    doc = store.get("DOC", src)
+    if doc:
+        try:
+            store.put(doc_item(dst, doc["content"], doc["updated"]), new=True)
+        except store.Exists:
+            raise HTTPException(409, "Something already exists at that path")
+        store.delete("DOC", src)
+        ensure_folders(parents(dst))
+        return {"path": dst}
+
+    if not store.get("FOLDER", src):
+        raise HTTPException(404, "Not found")
+    if dst.startswith(src + "/"):
+        raise HTTPException(400, "Can't move a folder into itself")
+    if store.get("FOLDER", dst) or store.any_with_prefix("DOC", dst + "/"):
         raise HTTPException(409, "Something already exists at that path")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(src, dst)
-    return {"path": clean_rel(body.dst)}
+    docs = store.query("DOC", src + "/")
+    folders = [src] + [f["sk"] for f in store.query("FOLDER", src + "/", fields=["sk"])]
+    moved = lambda p: dst + p[len(src):]
+    # Write the new copies before deleting the old ones, so a failure halfway loses nothing.
+    store.batch_write(puts=[{**d, "sk": moved(d["sk"])} for d in docs]
+                      + [{"pk": "FOLDER", "sk": moved(f)} for f in folders])
+    ensure_folders(parents(dst))
+    store.batch_write(deletes=[("DOC", d["sk"]) for d in docs] + [("FOLDER", f) for f in folders])
+    return {"path": dst}
 
 
 @app.post("/admin/api/folders")
 def create_folder(body: FolderBody):
-    folder_dir(body.path).mkdir(parents=True, exist_ok=True)
-    return {"path": clean_rel(body.path)}
+    path = clean_rel(body.path)
+    ensure_folders(parents(path) + [path])
+    return {"path": path}
 
 
 @app.delete("/admin/api/folders/{rel:path}")
 def delete_folder(rel: str):
-    d = folder_dir(rel)
-    if not d.is_dir():
+    path = clean_rel(rel)
+    if not store.get("FOLDER", path):
         raise HTTPException(404, "Folder not found")
-    if any(d.iterdir()):
+    if store.any_with_prefix("DOC", path + "/") or store.any_with_prefix("FOLDER", path + "/"):
         raise HTTPException(409, "Folder isn't empty — move or delete its docs first")
-    d.rmdir()
+    store.delete("FOLDER", path)
     return {"ok": True}
 
 
 @app.put("/admin/api/home")
 def save_home(body: HomeBody):
-    HOME_FILE.write_text(json.dumps(body.model_dump(), indent=2), encoding="utf-8")
+    store.put({"pk": "SITE", "sk": "HOME", **body.model_dump()})
     return load_home()
 
 
 # ---------- upload folders ----------
-# Folders for uploads are only labels, kept in a small JSON file. Files stay flat in
-# DATA/uploads, so filing one away never changes its URL or breaks a doc's link.
-UPLOAD_FOLDERS_FILE = DATA_DIR / "upload-folders.json"
-
+# Folders for uploads are only labels (UPLOADFOLDER items, plus a folder on each filed UPLOAD
+# item). Files stay flat in the bucket, so filing one away never changes its URL.
 
 def clean_upload_folder(rel: str) -> str:
     """'' is the top level. Folder names are free text, minus slashes at the edges."""
@@ -329,30 +356,30 @@ def with_parents(folder: str) -> set[str]:
 
 
 def load_upload_folders() -> dict:
-    try:
-        data = json.loads(UPLOAD_FOLDERS_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        data = {}
-    files = {k: v for k, v in data.get("files", {}).items() if v and (UPLOADS_DIR / k).is_file()}
-    folders = set(data.get("folders", []))
+    files = {f["sk"]: f["folder"] for f in store.query("UPLOAD") if f.get("folder")}
+    folders = {f["sk"] for f in store.query("UPLOADFOLDER", fields=["sk"])}
     for f in [*folders, *files.values()]:
         folders |= with_parents(f)
     return {"folders": folders, "files": files}
 
 
 def save_upload_folders(meta: dict) -> None:
-    files = {k: v for k, v in sorted(meta["files"].items()) if v}  # '' = unsorted, no entry needed
-    out = {"folders": sorted(meta["folders"] - {""}, key=str.lower), "files": files}
-    tmp = UPLOAD_FOLDERS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(out, indent=2), encoding="utf-8")
-    tmp.replace(UPLOAD_FOLDERS_FILE)
+    """Write only what changed since the last load."""
+    old = load_upload_folders()
+    folders = meta["folders"] - {""}
+    files = {k: v for k, v in meta["files"].items() if v}  # '' = unsorted, no item needed
+    store.batch_write(
+        puts=[{"pk": "UPLOADFOLDER", "sk": f} for f in folders - old["folders"]]
+        + [{"pk": "UPLOAD", "sk": k, "folder": v} for k, v in files.items() if old["files"].get(k) != v],
+        deletes=[("UPLOADFOLDER", f) for f in old["folders"] - folders]
+        + [("UPLOAD", k) for k in old["files"].keys() - files.keys()],
+    )
 
 
-def upload_path(name: str) -> Path:
-    f = (UPLOADS_DIR / name).resolve()
-    if f.parent != UPLOADS_DIR or not f.is_file() or f.name.startswith("."):
+def check_upload(name: str) -> str:
+    if not re.fullmatch(r"[\w.-]+", name) or name.startswith(".") or not store.upload_exists(name):
         raise HTTPException(404, "File not found")
-    return f
+    return name
 
 
 class UploadFolderBody(BaseModel):
@@ -431,7 +458,7 @@ def move_uploads(body: MoveUploadsBody):
     folder = clean_upload_folder(body.folder)
     meta = load_upload_folders()
     for name in body.names:
-        upload_path(name)
+        check_upload(name)
         if folder:
             meta["files"][name] = folder
         else:
@@ -442,45 +469,43 @@ def move_uploads(body: MoveUploadsBody):
 
 
 @app.post("/admin/api/uploads")
-async def upload(file: UploadFile = File(...), folder: str = Form("")):
-    name = Path(file.filename or "file").name
-    ext = Path(name).suffix.lower()
-    if not ext and file.content_type and file.content_type.startswith("image/"):
-        ext = "." + file.content_type.split("/")[1].split("+")[0]
-    if ext not in ALLOWED_UPLOADS:
+def upload(file: UploadFile = File(...), folder: str = Form("")):
+    name = PurePosixPath(file.filename or "file").name
+    ext = PurePosixPath(name).suffix.lower()
+    content_type = file.content_type or ""
+    if not ext and content_type.startswith("image/"):
+        ext = "." + content_type.split("/")[1].split("+")[0]
+    if ext not in CONTENT_TYPES:
         raise HTTPException(400, f"File type {ext or '(none)'} not allowed")
-    final = f"{file_slug(Path(name).stem)}-{uuid.uuid4().hex[:8]}{ext}"
-    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File too large (max 25 MB)")
     folder = clean_upload_folder(folder)
-    (UPLOADS_DIR / final).write_bytes(data)
+    stem = PurePosixPath(name).stem
+    final = f"{file_slug(stem)}-{uuid.uuid4().hex[:8]}{ext}"
+    store.put_upload(final, data, CONTENT_TYPES[ext])
     if folder:
         meta = load_upload_folders()
         meta["files"][final] = folder
         meta["folders"] |= with_parents(folder)
         save_upload_folders(meta)
-    return {"url": f"/uploads/{final}", "name": Path(name).stem, "is_image": ext in IMAGE_EXTS, "folder": folder}
+    return {"url": f"/uploads/{final}", "name": stem, "is_image": ext in IMAGE_EXTS, "folder": folder}
 
 
 @app.get("/admin/api/uploads")
 def list_uploads():
     """Upload folders, plus every uploaded file (newest first) with its folder and the docs that use it."""
-    docs = {f.relative_to(DOCS_DIR).as_posix()[:-3]: f.read_text(encoding="utf-8")
-            for f in DOCS_DIR.rglob("*.md")}
+    docs = {d["sk"]: d["content"] for d in store.query("DOC", fields=["sk", "content"])}
     home_body = load_home()["body"]
-    files = sorted((f for f in UPLOADS_DIR.iterdir() if f.is_file() and not f.name.startswith(".")),
-                   key=lambda f: f.stat().st_mtime, reverse=True)
+    files = sorted(store.list_uploads(), key=lambda f: f["modified"], reverse=True)
     meta = load_upload_folders()
     return {"folders": sorted(meta["folders"], key=str.lower), "files": [{
-        "name": f.name,
-        "folder": meta["files"].get(f.name, ""),
-        "url": f"/uploads/{f.name}",
-        "size": f.stat().st_size,
-        "modified": int(f.stat().st_mtime),
-        "is_image": f.suffix.lower() in IMAGE_EXTS,
-        "used_in": sorted(path for path, text in docs.items() if f"/uploads/{f.name}" in text),
-        "on_home": f"/uploads/{f.name}" in home_body,
+        **f,
+        "folder": meta["files"].get(f["name"], ""),
+        "url": f"/uploads/{f['name']}",
+        "is_image": PurePosixPath(f["name"]).suffix.lower() in IMAGE_EXTS,
+        "used_in": sorted(path for path, text in docs.items() if f"/uploads/{f['name']}" in text),
+        "on_home": f"/uploads/{f['name']}" in home_body,
     } for f in files]}
 
 
@@ -495,17 +520,17 @@ def file_slug(name: str) -> str:
 @app.post("/admin/api/uploads/{name}/rename")
 def rename_upload(name: str, body: RenameUploadBody):
     """Rename an uploaded file and update every doc that links to it."""
-    f = upload_path(name)
+    f = PurePosixPath(check_upload(name))
     m = re.match(r"^(.*?)(?:-([0-9a-f]{8}))?$", f.stem)
     old_stem, tag = m.group(1), m.group(2) or uuid.uuid4().hex[:8]
-    new_stem = file_slug(Path(body.name.strip()).stem if body.name.strip().lower().endswith(f.suffix.lower()) else body.name.strip())
+    new_stem = file_slug(PurePosixPath(body.name.strip()).stem if body.name.strip().lower().endswith(f.suffix.lower()) else body.name.strip())
     final = f"{new_stem}-{tag}{f.suffix}"
-    if final == f.name:
+    if final == name:
         return {"name": final, "url": f"/uploads/{final}", "docs": []}
-    if (UPLOADS_DIR / final).exists():
+    if store.upload_exists(final):
         raise HTTPException(409, "A file with that name already exists")
-    meta = load_upload_folders()  # before the rename: loading drops entries for missing files
-    f.rename(UPLOADS_DIR / final)
+    store.rename_upload(name, final)
+    meta = load_upload_folders()
     if name in meta["files"]:
         meta["files"][final] = meta["files"].pop(name)
         save_upload_folders(meta)
@@ -513,42 +538,78 @@ def rename_upload(name: str, body: RenameUploadBody):
     # Also swap the alt/link text if it's still the old auto-generated name.
     # (An image's alt text may end in a size, like "diagram|50%"; that part is kept.)
     alt_re = re.compile(r"(!?\[)" + re.escape(old_stem) + r"((?:\s*\|[^\]]*)?\]\(" + re.escape(old_url) + r"\))")
+    relink = lambda text: alt_re.sub(lambda m: m.group(1) + new_stem + m.group(2), text).replace(old_url, new_url)
     changed = []
-    for doc in DOCS_DIR.rglob("*.md"):
-        text = doc.read_text(encoding="utf-8")
-        if old_url not in text:
-            continue
-        text = alt_re.sub(lambda m: m.group(1) + new_stem + m.group(2), text).replace(old_url, new_url)
-        doc.write_text(text, encoding="utf-8")
-        changed.append(doc.relative_to(DOCS_DIR).as_posix()[:-3])
+    for doc in store.query("DOC"):
+        if old_url in doc["content"]:
+            store.put(doc_item(doc["sk"], relink(doc["content"])))
+            changed.append(doc["sk"])
     settings = load_home()
     if old_url in settings["body"]:
-        settings["body"] = alt_re.sub(lambda m: m.group(1) + new_stem + m.group(2), settings["body"]).replace(old_url, new_url)
-        HOME_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+        store.put({"pk": "SITE", "sk": "HOME", **settings, "body": relink(settings["body"])})
     return {"name": final, "url": new_url, "old_stem": old_stem, "new_stem": new_stem, "docs": sorted(changed)}
 
 
 @app.delete("/admin/api/uploads/{name}")
 def delete_upload(name: str):
-    upload_path(name).unlink()
+    store.delete_upload(check_upload(name))
     meta = load_upload_folders()
     if meta["files"].pop(name, None) is not None:
         save_upload_folders(meta)
     return {"ok": True}
 
 
-# ---------- files & pages ----------
+# ---------- sign in / out ----------
+
+@app.post("/admin/login")
+def login(request: Request, password: str = Form(""), next: str = Form("/admin/")):
+    # Only ever send people on to an admin page, never off-site.
+    next = next if next.startswith("/admin") and not next.startswith("/admin/login") else "/admin/"
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+    if not same_origin(request):
+        raise HTTPException(403, "Cross-site request refused")
+    if auth.throttled(ip):
+        return RedirectResponse("/admin/login?error=throttled&next=" + quote(next), status_code=303)
+    if not auth.check_password(password):
+        auth.record_failure(ip)
+        return RedirectResponse("/admin/login?error=wrong&next=" + quote(next), status_code=303)
+    response = RedirectResponse(next, status_code=303)
+    response.set_cookie(auth.COOKIE, auth.start_session(), max_age=auth.SESSION_DAYS * 86400, path="/",
+                        httponly=True, samesite="strict", secure=request.url.scheme == "https")
+    return response
+
+
+@app.post("/admin/logout")
+def logout(request: Request):
+    auth.end_session(request.cookies.get(auth.COOKIE))
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(auth.COOKIE, path="/")
+    return response
+
+
+@app.get("/api/session")
+def session(request: Request):
+    """Whether this visitor can use the admin pages (the pages use it to show Sign out)."""
+    return {"login_required": LOGIN_REQUIRED,
+            "signed_in": not LOGIN_REQUIRED or auth.valid_session(request.cookies.get(auth.COOKIE))}
+
+
+# ---------- pages, static files and uploads ----------
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
 
 @app.get("/uploads/{name}")
 def get_upload(name: str):
-    f = (UPLOADS_DIR / name).resolve()
-    if f.parent != UPLOADS_DIR or not f.is_file():
-        raise HTTPException(404)
+    try:
+        data, content_type = store.get_upload(check_upload(name))
+    except store.Missing:
+        raise HTTPException(404, "File not found")
     # Uploaded SVGs could carry scripts; sandbox anything opened directly.
     headers = {"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
                "X-Content-Type-Options": "nosniff",
                "Cache-Control": "public, max-age=31536000, immutable"}
-    return FileResponse(f, headers=headers)
+    return Response(data, media_type=content_type, headers=headers)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -559,21 +620,24 @@ def admin_redirect():
     return RedirectResponse("/admin/")
 
 
-@app.get("/admin/")
-@app.get("/admin/uploads")
-@app.get("/admin/home")
-def admin_page():
-    return FileResponse(STATIC_DIR / "admin.html")
+@app.get("/admin/login")
+def login_page():
+    return FileResponse(os.path.join(STATIC_DIR, "login.html"))
 
 
 @app.get("/admin/edit")
 @app.get("/admin/edit/{rel:path}")
 def editor_page(rel: str = ""):
     # /admin/edit/<doc path> opens that doc; the page reads the path itself.
-    return FileResponse(STATIC_DIR / "editor.html")
+    return FileResponse(os.path.join(STATIC_DIR, "editor.html"))
+
+
+@app.get("/admin/{tab:path}")
+def admin_page(tab: str = ""):
+    return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
 
 
 @app.get("/")
 @app.get("/docs/{rel:path}")
 def viewer_page(rel: str = ""):
-    return FileResponse(STATIC_DIR / "viewer.html")
+    return FileResponse(os.path.join(STATIC_DIR, "viewer.html"))

@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 data/
 .env
+.pytest_cache/
+.DS_Store
+deploy/.env

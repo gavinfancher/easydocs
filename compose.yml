@@ -1,10 +1,28 @@
+# Local dev: the app plus its own Postgres. There's no login locally (MYDOCS_LOCAL=1), so the
+# ports only listen on this machine. Data persists in the pgdata volume (`docker compose down -v` wipes it).
 services:
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: mydocs
+      POSTGRES_PASSWORD: mydocs
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mydocs"]
+      interval: 2s
+      retries: 15
+
   mydocs:
     build: .
-    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
     ports:
-      - "127.0.0.1:8000:8000"   # this machine only: there is no login
+      - "127.0.0.1:${MYDOCS_PORT:-8000}:8000"   # MYDOCS_PORT=8010 make dev, if 8000 is taken
     environment:
+      MYDOCS_LOCAL: "1"
       MYDOCS_TITLE: "My Docs"
-    volumes:
-      - ./data:/data
+      MYDOCS_DATABASE_URL: postgresql://mydocs:mydocs@postgres/mydocs
+
+volumes:
+  pgdata:

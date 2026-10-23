@@ -1,5 +1,5 @@
 [project]
-name = "mydocs"
+name = "easydocs"
 version = "0.1.0"
 description = "Self-hosted markdown docs with a web editor"
 readme = "README.md"
@@ -7,6 +7,18 @@ authors = [{ name = "Gavin Fancher", email = "gavinfancher02@gmail.com" }]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.0",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.6",
     "python-multipart>=0.0.32",
     "uvicorn>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

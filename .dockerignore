@@ -2,3 +2,7 @@
 .git
 data
 __pycache__
+tests
+.pytest_cache
+deploy
+.DS_Store

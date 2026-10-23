@@ -6,6 +6,7 @@
   <title>Admin · Docs</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/auth.js"></script>
   <style>
     .admin-nav { width: 220px; }
     .admin-nav a {
@@ -56,6 +57,7 @@
     <div class="spacer"></div>
     <a class="btn primary" href="/admin/edit" data-icon="edit">Open editor</a>
     <a class="btn hide-mobile" href="/" target="_blank" data-icon="external">View site</a>
+    <button class="btn" id="sign-out" hidden>Sign out</button>
   </header>
   <div class="layout">
     <nav class="sidebar admin-nav">

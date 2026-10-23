@@ -1,0 +1,28 @@
+# Production, on the mydocs VM (`make deploy` copies the repo to /opt/mydocs and runs this).
+# The app talks to Postgres on postgres.ad.gavinf.com; cloudflared carries mydocs.gavinf.com to it,
+# so nothing listens on the network. Secrets are in deploy/.env on the VM, never in git:
+#
+#   MYDOCS_DATABASE_URL=postgresql://mydocs:<password>@postgres.ad.gavinf.com/mydocs
+#   MYDOCS_ADMIN_PASSWORD_HASH=scrypt:...      (uv run python -m app.auth)
+#   TUNNEL_TOKEN=...                           (Cloudflare Zero Trust → Networks → Tunnels)
+services:
+  mydocs:
+    build: ..
+    restart: unless-stopped
+    environment:
+      MYDOCS_TITLE: "My Docs"
+      MYDOCS_DATABASE_URL: ${MYDOCS_DATABASE_URL:?}
+      MYDOCS_ADMIN_PASSWORD_HASH: ${MYDOCS_ADMIN_PASSWORD_HASH:?}
+    ports:
+      - "127.0.0.1:8000:8000"   # for curl on the VM itself; the internet comes in via cloudflared
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/config')"]
+      interval: 30s
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run   # the tunnel's public hostname points at http://mydocs:8000
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?}
+    depends_on: [mydocs]

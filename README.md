@@ -1,28 +1,77 @@
 # mydocs
 
-A tiny self-hosted markdown docs site with a web editor.
+A small self-hosted markdown docs site, with a web editor. Live at https://mydocs.gavinf.com.
 
 - **`/`**: read-only docs site: a home page, then sidebar, search and diagrams
 - **`/admin/`**: admin panel. Organize docs and folders, and manage uploads
 - **`/admin/edit`**: the editor, with live preview
 
-## Run it
+## How it runs
 
-**Docker (recommended for self-hosting)**
-
-```sh
-docker compose up -d --build
+```
+ browser ──► Cloudflare (mydocs.gavinf.com, HTTPS)
+               └─ tunnel ──► cloudflared ──► mydocs app (FastAPI)  ── Proxmox VM 506, mydocs.ad.gavinf.com
+                                                └──► Postgres, database "mydocs" ── postgres.ad.gavinf.com
 ```
 
-Open http://localhost:8000. Your docs and uploads live in `./data`.
+The tunnel dials out from the VM, so nothing on the network is opened to the internet. Postgres holds
+everything (docs, settings, uploaded files and sign-in sessions), so the VM keeps no state and can be
+rebuilt from `deploy/cloud-init.yaml`.
 
-**Locally with uv**
+Reading is public. The admin panel and editor need the admin password: you sign in at `/admin/login`
+and get a session cookie (30 days, HttpOnly, Secure, SameSite=Strict) that signing out really ends.
+Ten wrong passwords from one IP pause logins for 15 minutes.
+
+| Piece | Where |
+| --- | --- |
+| API and pages (FastAPI) | `app/main.py` |
+| Postgres access, table layout | `app/store.py` |
+| Admin password and sessions | `app/auth.py`, `app/static/login.html` |
+| Production containers (app + cloudflared) | `deploy/compose.yml` |
+| VM setup | `deploy/cloud-init.yaml` |
+
+### Deploy
 
 ```sh
-uv run uvicorn app.main:app --reload
+make deploy        # rsync to the VM, rebuild and restart the containers
+make logs          # tail the app and tunnel logs
 ```
 
-Open http://localhost:8000.
+Secrets live only on the VM, in `/opt/mydocs/deploy/.env` (mode 600): the database URL, the admin
+password hash and the tunnel token. To change the admin password, run this in a terminal (it asks for
+the new password twice, then updates the VM and restarts the app):
+
+```sh
+make set-password
+```
+
+The tunnel is `mydocs` in Cloudflare Zero Trust → Networks → Tunnels. Its public hostname
+`mydocs.gavinf.com` points at `http://mydocs:8000`.
+
+### Rebuilding the VM
+
+On the Proxmox host (10.0.4.10), with `deploy/cloud-init.yaml` copied to
+`/var/lib/vz/snippets/mydocs-user.yaml`:
+
+```sh
+qm create 506 --name mydocs --memory 2048 --cores 2 --cpu host --ostype l26 --agent enabled=1 --onboot 1 \
+  --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci --serial0 socket --vga serial0
+qm set 506 --scsi0 local-lvm:0,import-from=/var/lib/vz/template/iso/ubuntu-26.04-server-cloudimg-amd64.img
+qm resize 506 scsi0 16G
+qm set 506 --ide2 local-lvm:cloudinit --boot order=scsi0 --ipconfig0 ip=dhcp --cicustom user=local:snippets/mydocs-user.yaml
+qm start 506
+```
+
+Then write `/opt/mydocs/deploy/.env` (see the top of `deploy/compose.yml`) and run `make deploy HOST=ubuntu@<ip>`.
+
+### Local dev
+
+```sh
+make dev           # http://localhost:8000 (MYDOCS_PORT=8010 make dev if 8000 is taken)
+make test          # starts a throwaway postgres:18.4 on 127.0.0.1:5433 the first time
+```
+
+`make dev` runs the app with its own Postgres container and no login.
 
 ## Writing docs
 
@@ -50,28 +99,9 @@ Open http://localhost:8000.
   ⌘⇧8 bullets, ⌘⇧7 numbers, ⌘⇧9 checklist, ⌘⇧. quote.
 - **Sidebar**: the button at the top left shows or hides it.
 
-## Configuration
+## Limits
 
-| Env var           | Default | Purpose                         |
-| ----------------- | ------- | ------------------------------- |
-| `MYDOCS_TITLE`    | `Docs`  | Site name in the header         |
-| `MYDOCS_DATA`     | `data`  | Where docs and uploads are kept |
-
-## Storage
-
-Everything is plain files, so back up `data/` and you've backed up everything:
-
-```
-data/
-  docs/       # your .md files, folders = sidebar sections
-  uploads/    # pasted/dropped images and files
-  upload-folders.json   # which upload is in which folder
-  home.json             # home page settings
-```
-
-You can also edit the `.md` files directly; changes show up on refresh.
-
-## Notes
-
-- There's no login: anyone who can reach the server can read **and edit** everything. The compose file only
-  listens on this machine (`127.0.0.1`); put a reverse proxy with auth (or a VPN) in front before exposing it.
+- A doc can be up to 350 KB of markdown. Put big content in uploads.
+- Uploads can be up to 25 MB.
+- Search and the uploads "used in" list read every doc. That's fine for hundreds of docs; past that,
+  Postgres full-text search is the next step.
