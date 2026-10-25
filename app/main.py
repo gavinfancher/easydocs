@@ -1,32 +1,42 @@
 """easydocs — a small self-hosted markdown docs site.
 
-Docs, folders, settings and uploaded files all live in Postgres (see store.py).
-Uploads are referenced by absolute URLs (/uploads/<name>), so moving a doc never breaks
-its images. Upload folders are only labels, so filing an upload never changes its URL.
+Docs, folders and settings live in Postgres (see store.py); uploaded files in an R2 bucket
+(see storage.py), with their names and details in Postgres. Uploads are referenced by absolute
+URLs (/uploads/<name>), so moving a doc never breaks its images. Upload folders are only
+labels, so filing an upload never changes its URL.
 
-The whole site, reading included, needs the admin password (see auth.py), except with
-EASYDOCS_LOCAL=1, for local dev (see compose.yml). Only the login page and /static stay open.
+In production the pages are static files on Cloudflare (web/) at easydocs.gavinf.com, and they
+call this API at easydocs-api.gavinf.com (a Cloudflare Tunnel to the cluster), so it allows that
+origin with CORS. Locally this app serves the pages too.
+
+The whole API, reading included, needs a session token, from signing in with the admin password
+(see auth.py), except with EASYDOCS_LOCAL=1, for local dev (see compose.yml). The pages are
+plain files with no docs in them, so they're open.
 """
 
+import hmac
 import os
 import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
-from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import auth, store
+from app import auth, storage, store
 
 SITE_TITLE = os.environ.get("EASYDOCS_TITLE", "easydocs")
 LOCAL = os.environ.get("EASYDOCS_LOCAL") == "1"
 LOGIN_REQUIRED = not LOCAL
+# Where the pages are served from, when that's not this app (https://easydocs.gavinf.com).
+CORS_ORIGINS = [o.strip() for o in os.environ.get("EASYDOCS_CORS_ORIGINS", "").split(",") if o.strip()]
 if LOGIN_REQUIRED and not auth.PASSWORD_HASH:
     raise RuntimeError("Set EASYDOCS_ADMIN_PASSWORD_HASH (make one with: uv run python -m app.auth)")
 
@@ -96,34 +106,34 @@ async def cache_headers(request: Request, call_next):
     return response
 
 
-def same_origin(request: Request) -> bool:
-    """Was this sent by our own pages? Browsers always say where a POST/PUT/DELETE came from."""
-    source = request.headers.get("origin") or request.headers.get("referer") or ""
-    return urlsplit(source).netloc == request.headers.get("host")
+def client_ip(request: Request) -> str:
+    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
 
 
-# Open without signing in: the login page, the CSS/JS/icons it needs, and whether you are signed in.
-PUBLIC_PATHS = {"/admin/login", "/api/session"}
-PUBLIC_PREFIXES = ("/static/",)
+def bearer(request: Request) -> str | None:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else None
 
 
-def is_public(path: str) -> bool:
-    return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+# Every API call needs a session token, except signing in and asking whether you're signed in.
+OPEN_API = {"/api/login", "/api/session"}
 
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    if LOGIN_REQUIRED and not is_public(path):
-        if not await run_in_threadpool(auth.valid_session, request.cookies.get(auth.COOKIE)):
-            if path.startswith(("/api/", "/admin/api/", "/uploads/")):
-                return JSONResponse({"detail": "Sign in first"}, status_code=401)
-            target = path + ("?" + request.url.query if request.url.query else "")
-            return RedirectResponse("/admin/login?next=" + quote(target), status_code=303)
-        # The cookie is SameSite=Strict already; this is a second lock against cross-site requests.
-        if request.method not in ("GET", "HEAD") and not same_origin(request):
-            return JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
+    if (LOGIN_REQUIRED and path.startswith(("/api/", "/admin/api/")) and path not in OPEN_API
+            and request.method != "OPTIONS"):
+        if not await run_in_threadpool(auth.valid_session, bearer(request)):
+            return JSONResponse({"detail": "Sign in first"}, status_code=401)
     return await call_next(request)
+
+
+# Added last, so it runs first: answers CORS preflights, and labels every response (401s too).
+CORS_SETTINGS = {"allow_methods": ["GET", "POST", "PUT", "DELETE"], "allow_headers": ["Authorization", "Content-Type"],
+                 "max_age": 3600}
+if CORS_ORIGINS:
+    app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, **CORS_SETTINGS)
 
 
 # ---------- path helpers ----------
@@ -478,28 +488,136 @@ def move_uploads(body: MoveUploadsBody):
     return {"ok": True, "folder": folder}
 
 
-@app.post("/admin/api/uploads")
-def upload(file: UploadFile = File(...), folder: str = Form("")):
-    name = PurePosixPath(file.filename or "file").name
+def upload_type(filename: str, content_type: str) -> tuple[str, str]:
+    """(stem, extension) of an upload's name, or a 400 if that kind of file isn't allowed."""
+    name = PurePosixPath(filename or "file").name
     ext = PurePosixPath(name).suffix.lower()
-    content_type = file.content_type or ""
     if not ext and content_type.startswith("image/"):
         ext = "." + content_type.split("/")[1].split("+")[0]
     if ext not in CONTENT_TYPES:
         raise HTTPException(400, f"File type {ext or '(none)'} not allowed")
+    return PurePosixPath(name).stem, ext
+
+
+def new_upload_name(stem: str, ext: str) -> str:
+    return f"{file_slug(stem)}-{uuid.uuid4().hex[:8]}{ext}"
+
+
+def upload_result(name: str, folder: str) -> dict:
+    return {"url": f"/uploads/{name}", "is_image": PurePosixPath(name).suffix.lower() in IMAGE_EXTS, "folder": folder}
+
+
+def file_into(name: str, folder: str) -> None:
+    if folder:
+        meta = load_upload_folders()
+        meta["files"][name] = folder
+        meta["folders"] |= with_parents(folder)
+        save_upload_folders(meta)
+
+
+def remove_upload(row: dict) -> None:
+    if row["object_key"]:
+        storage.delete(row["object_key"], row["bucket"])
+    store.delete_upload(row["name"])
+
+
+def clear_stale_uploads() -> None:
+    for row in store.stale_uploads():
+        try:
+            remove_upload(row)
+        except Exception:
+            pass  # try again next time
+
+
+class StartUploadBody(BaseModel):
+    filename: str
+    content_type: str = ""
+    size: int
+
+
+class FinishUploadBody(BaseModel):
+    folder: str = ""
+
+
+# Uploading from the browser takes three calls, so the file itself goes straight to R2:
+#   1. POST /admin/api/uploads/start         reserve a name; get a presigned URL to PUT the file to
+#   2. PUT  <that URL>                       (without R2: PUT /admin/api/uploads/<name>/data)
+#   3. POST /admin/api/uploads/<name>/finish check it arrived; it then shows in the uploads list
+
+@app.post("/admin/api/uploads/start")
+def start_upload(body: StartUploadBody):
+    stem, ext = upload_type(body.filename, body.content_type)
+    if body.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File too large (max 25 MB)")
+    clear_stale_uploads()
+    name, content_type = new_upload_name(stem, ext), CONTENT_TYPES[ext]
+    if storage.enabled():
+        key = storage.new_key(ext)
+        store.start_upload(name, content_type, body.size, storage.BUCKET, key)
+        target = storage.upload_url(key, content_type)
+    else:
+        store.start_upload(name, content_type, body.size, None, None)
+        target = {"method": "PUT", "url": f"/admin/api/uploads/{name}/data", "headers": {"Content-Type": content_type}}
+    return {"name": stem, "file": name, "upload": target}
+
+
+@app.put("/admin/api/uploads/{name}/data")
+async def upload_data(name: str, request: Request):
+    """Step 2 without R2 (local dev): the bytes come here and are kept in Postgres."""
+    row = await run_in_threadpool(pending_upload, name)
+    if row["object_key"]:
+        raise HTTPException(400, "This upload goes to R2")
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "File too large (max 25 MB)")
+    await run_in_threadpool(store.put_upload, name, bytes(data), row["content_type"])
+    return {"ok": True}
+
+
+def pending_upload(name: str) -> dict:
+    try:
+        return store.get_upload(check_upload(name))
+    except store.Missing:
+        raise HTTPException(404, "File not found")
+
+
+@app.post("/admin/api/uploads/{name}/finish")
+def finish_upload(name: str, body: FinishUploadBody):
+    row = pending_upload(name)
+    if row["status"] == "pending":
+        if row["object_key"]:
+            obj = storage.head(row["object_key"], row["bucket"])
+            if obj is None:
+                raise HTTPException(400, "The file didn't arrive. Try uploading it again.")
+            if obj["size"] > MAX_UPLOAD_BYTES:
+                remove_upload(row)
+                raise HTTPException(413, "File too large (max 25 MB)")
+            store.finish_upload(name, obj["size"], obj["etag"])
+        else:
+            raise HTTPException(400, "The file didn't arrive. Try uploading it again.")
+    folder = clean_upload_folder(body.folder)
+    file_into(name, folder)
+    return upload_result(name, folder)
+
+
+@app.post("/admin/api/uploads")
+def upload(file: UploadFile = File(...), folder: str = Form("")):
+    """Upload in one go, through the API (scripts, and older pages)."""
+    stem, ext = upload_type(file.filename, file.content_type or "")
     data = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "File too large (max 25 MB)")
     folder = clean_upload_folder(folder)
-    stem = PurePosixPath(name).stem
-    final = f"{file_slug(stem)}-{uuid.uuid4().hex[:8]}{ext}"
-    store.put_upload(final, data, CONTENT_TYPES[ext])
-    if folder:
-        meta = load_upload_folders()
-        meta["files"][final] = folder
-        meta["folders"] |= with_parents(folder)
-        save_upload_folders(meta)
-    return {"url": f"/uploads/{final}", "name": stem, "is_image": ext in IMAGE_EXTS, "folder": folder}
+    name, content_type = new_upload_name(stem, ext), CONTENT_TYPES[ext]
+    if storage.enabled():
+        key = storage.new_key(ext)
+        store.put_upload_object(name, content_type, len(data), storage.BUCKET, key, storage.put(key, data, content_type))
+    else:
+        store.put_upload(name, data, content_type)
+    file_into(name, folder)
+    return {**upload_result(name, folder), "name": stem}
 
 
 @app.get("/admin/api/uploads")
@@ -562,7 +680,7 @@ def rename_upload(name: str, body: RenameUploadBody):
 
 @app.delete("/admin/api/uploads/{name}")
 def delete_upload(name: str):
-    store.delete_upload(check_upload(name))
+    remove_upload(pending_upload(name))
     meta = load_upload_folders()
     if meta["files"].pop(name, None) is not None:
         save_upload_folders(meta)
@@ -571,38 +689,33 @@ def delete_upload(name: str):
 
 # ---------- sign in / out ----------
 
-@app.post("/admin/login")
-def login(request: Request, password: str = Form(""), next: str = Form("/")):
-    # Only ever send people on to a page of this site, never off-site.
-    local = next.startswith("/") and not next.startswith(("//", "/\\")) and not next.startswith("/admin/login")
-    next = next if local else "/"
-    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
-    if not same_origin(request):
-        raise HTTPException(403, "Cross-site request refused")
+class LoginBody(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(request: Request, body: LoginBody):
+    """The password for a session token. The pages keep it and send it as `Authorization: Bearer`."""
+    ip = client_ip(request)
     if auth.throttled(ip):
-        return RedirectResponse("/admin/login?error=throttled&next=" + quote(next), status_code=303)
-    if not auth.check_password(password):
+        raise HTTPException(429, "Too many tries. Wait 15 minutes, then try again.")
+    if not auth.check_password(body.password):
         auth.record_failure(ip)
-        return RedirectResponse("/admin/login?error=wrong&next=" + quote(next), status_code=303)
-    response = RedirectResponse(next, status_code=303)
-    response.set_cookie(auth.COOKIE, auth.start_session(), max_age=auth.SESSION_DAYS * 86400, path="/",
-                        httponly=True, samesite="strict", secure=request.url.scheme == "https")
-    return response
+        raise HTTPException(401, "That password isn’t right.")
+    return {"token": auth.start_session(), "days": auth.SESSION_DAYS}
 
 
-@app.post("/admin/logout")
+@app.post("/api/logout")
 def logout(request: Request):
-    auth.end_session(request.cookies.get(auth.COOKIE))
-    response = RedirectResponse("/admin/login", status_code=303)
-    response.delete_cookie(auth.COOKIE, path="/")
-    return response
+    auth.end_session(bearer(request))
+    return {"ok": True}
 
 
 @app.get("/api/session")
 def session(request: Request):
-    """Whether this visitor is signed in (the pages use it to show Sign out)."""
+    """Whether this visitor is signed in."""
     return {"login_required": LOGIN_REQUIRED,
-            "signed_in": not LOGIN_REQUIRED or auth.valid_session(request.cookies.get(auth.COOKIE))}
+            "signed_in": not LOGIN_REQUIRED or auth.valid_session(bearer(request))}
 
 
 # ---------- pages, static files and uploads ----------
@@ -610,17 +723,77 @@ def session(request: Request):
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
+# Docs link uploads as /uploads/<name>. An <img> can't send the session token, so the pages swap
+# those for links from /api/uploads/links: presigned R2 URLs, or (files kept in Postgres) a
+# /uploads/ URL signed here. Both stay the same for an hour, so the browser caches the file.
+LINK_KEY = secrets.token_bytes(32)  # new on every start, which only expires links early
+
+
+def link_signature(name: str, expires: int) -> str:
+    return hmac.new(LINK_KEY, f"{name}:{expires}".encode(), "sha256").hexdigest()
+
+
+def upload_link(row: dict) -> str:
+    if row["object_key"]:
+        return storage.download_url(row["object_key"], row["bucket"])
+    expires = int(time.time()) // 3600 * 3600 + 2 * 3600
+    return f"/uploads/{row['name']}?expires={expires}&sig={link_signature(row['name'], expires)}"
+
+
+class UploadLinksBody(BaseModel):
+    names: list[str]
+
+
+@app.post("/api/uploads/links")
+def upload_links(body: UploadLinksBody):
+    links = {}
+    for name in body.names[:500]:
+        try:
+            row = store.get_upload(check_upload(name))
+        except (store.Missing, HTTPException):
+            continue
+        if row["status"] == "ready":
+            links[name] = upload_link(row)
+    return {"links": links}
+
+
 @app.get("/uploads/{name}")
-def get_upload(name: str):
+def get_upload(name: str, request: Request, expires: int = 0, sig: str = ""):
+    signed = expires > time.time() and hmac.compare_digest(sig, link_signature(name, expires))
+    if LOGIN_REQUIRED and not signed and not auth.valid_session(bearer(request)):
+        raise HTTPException(401, "Sign in first")
     try:
-        data, content_type = store.get_upload(check_upload(name))
-    except store.Missing:
+        row = store.get_upload(check_upload(name))
+    except (store.Missing, HTTPException):
         raise HTTPException(404, "File not found")
-    # Uploaded SVGs could carry scripts; sandbox anything opened directly.
+    if row["status"] != "ready":
+        raise HTTPException(404, "File not found")
+    if row["object_key"]:
+        # To R2, by a presigned URL that stays the same for an hour, so the browser can cache both.
+        return RedirectResponse(storage.download_url(row["object_key"], row["bucket"]), status_code=302,
+                                headers={"Cache-Control": "private, max-age=3600"})
+    # Kept in Postgres (local dev). Uploaded SVGs could carry scripts; sandbox anything opened directly.
     headers = {"Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
                "X-Content-Type-Options": "nosniff",
-               "Cache-Control": "public, max-age=31536000, immutable"}
-    return Response(data, media_type=content_type, headers=headers)
+               "Cache-Control": "private, max-age=3600"}
+    return Response(store.get_upload_data(name), media_type=row["content_type"], headers=headers)
+
+
+@app.get("/healthz")
+def healthz():
+    """Alive. Never touches the database, so a database outage doesn't get the pod restarted."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    """Ready for traffic: the database answers."""
+    try:
+        with store.db() as conn:
+            conn.execute("SELECT 1")
+    except Exception:
+        return JSONResponse({"status": "database unavailable"}, status_code=503)
+    return {"status": "ready"}
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

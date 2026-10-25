@@ -1,0 +1,9 @@
+# Page URLs → the page that handles them (200 = serve that file, the URL stays as it is).
+# Exact paths first, then the wildcards. Everything else is a file under /static/.
+/                /static/viewer.html  200
+/admin           /static/admin.html   200
+/admin/login     /static/login.html   200
+/admin/edit      /static/editor.html  200
+/admin/edit/*    /static/editor.html  200
+/admin/*         /static/admin.html   200
+/docs/*          /static/viewer.html  200

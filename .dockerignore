@@ -6,3 +6,7 @@ tests
 .pytest_cache
 deploy
 .DS_Store
+web
+infra
+.github
+scripts

@@ -1,0 +1,70 @@
+# The Cloudflare Tunnel connector. It dials out to Cloudflare, so the cluster
+# needs no open ports or public IP. Its route (easydocs-api.gavinf.com →
+# http://easydocs.easydocs.svc.cluster.local:8000) lives in Cloudflare, set by
+# infra/terraform/tunnel.tf.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  annotations:
+    secrets.infisical.com/auto-reload: "true" # restart when the `easydocs` Secret changes
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      automountServiceAccountToken: false
+      # Replace the pod on an unreachable node after 60s instead of the default 5 min.
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532 # the image's `nonroot` user
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          # Pinned: bump on purpose. `latest` would change under us on any restart.
+          image: cloudflare/cloudflared:2026.10.0
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000 # serves /ready for the probes below
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom: { secretKeyRef: { name: easydocs, key: TUNNEL_TOKEN } }
+          ports:
+            - name: metrics
+              containerPort: 2000
+          # /ready is 200 once this connector has a live connection to Cloudflare.
+          livenessProbe:
+            httpGet: { path: /ready, port: metrics }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 4
+          readinessProbe:
+            httpGet: { path: /ready, port: metrics }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

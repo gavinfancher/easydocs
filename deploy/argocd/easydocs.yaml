@@ -1,0 +1,25 @@
+# The one thing you apply by hand. After this, Argo CD owns everything in
+# deploy/k8s: it polls main (every 3 minutes by default) and applies any change,
+# including the image tag CI commits after each build.
+#
+#   kubectl apply -f deploy/argocd/easydocs.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: easydocs
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/gavinfancher/easydocs.git # public: no repo credentials needed
+    targetRevision: main
+    path: deploy/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: easydocs
+  syncPolicy:
+    automated:
+      prune: true # something removed from git is removed from the cluster
+      selfHeal: true # a hand edit in the cluster is reverted to what git says
+    syncOptions:
+      - CreateNamespace=true

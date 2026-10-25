@@ -29,22 +29,31 @@
     <span class="brand">easydocs</span>
   </header>
   <div class="login-wrap">
-    <form class="login" method="post" action="/admin/login">
+    <form class="login" id="login">
       <h1>Sign in</h1>
       <p>This site needs the admin password.</p>
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
       <div class="error" id="error" hidden></div>
-      <input type="hidden" name="next" id="next">
-      <button class="primary" type="submit">Sign in</button>
+      <button class="primary" type="submit" id="submit">Sign in</button>
     </form>
   </div>
+  <script src="/static/config.js"></script>
+  <script src="/static/auth.js"></script>
   <script>
-    const params = new URLSearchParams(location.search);
-    document.getElementById('next').value = params.get('next') || '/';
-    const messages = { wrong: 'That password isn’t right.', throttled: 'Too many tries. Wait 15 minutes, then try again.' };
-    const error = document.getElementById('error');
-    if (messages[params.get('error')]) { error.textContent = messages[params.get('error')]; error.hidden = false; }
+    // Only ever send people on to a page of this site, never off-site.
+    const next = new URLSearchParams(location.search).get('next') || '/';
+    const safeNext = /^\/(?![/\\])/.test(next) && !next.startsWith('/admin/login') ? next : '/';
+    const form = document.getElementById('login'), error = document.getElementById('error');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      form.submit.disabled = true;
+      const problem = await auth.signIn(form.password.value);
+      form.submit.disabled = false;
+      if (!problem) return location.replace(safeNext);
+      error.textContent = problem; error.hidden = false;
+      form.password.select();
+    });
   </script>
 </body>
 </html>

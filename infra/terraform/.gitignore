@@ -1,0 +1,8 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+backend.hcl
+.build/
+# Saved plans (terraform plan -out=tfplan) contain secret values.
+tfplan

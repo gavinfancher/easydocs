@@ -16,9 +16,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import main, store  # noqa: E402
 
-ORIGIN = {"Origin": "http://testserver"}
-
-
 @pytest.fixture
 def anon():
     """A visitor who hasn't signed in."""
@@ -26,12 +23,13 @@ def anon():
     with store.db() as conn:
         conn.execute("TRUNCATE items, uploads, sessions")
     auth._failures.clear()
-    yield TestClient(main.app, headers=ORIGIN)
+    yield TestClient(main.app)
 
 
 @pytest.fixture
 def client(anon):
-    """A signed-in admin."""
-    r = anon.post("/admin/login", data={"password": PASSWORD}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/"
+    """A signed-in admin: every request carries the session token."""
+    r = anon.post("/api/login", json={"password": PASSWORD})
+    assert r.status_code == 200, r.text
+    anon.headers["Authorization"] = "Bearer " + r.json()["token"]
     return anon

@@ -1,0 +1,19 @@
+# Only cloudflared may open connections to the API. Everything arrives through
+# the tunnel, so nothing else in the cluster has a reason to reach it.
+# (Kubelet health probes come from the node and are allowed regardless.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: easydocs-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: easydocs
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: cloudflared
+      ports:
+        - port: 8000

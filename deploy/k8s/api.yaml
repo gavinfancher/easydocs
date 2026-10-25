@@ -1,0 +1,106 @@
+# The easydocs API: FastAPI, one container. The pages (static files on Cloudflare,
+# web/) call it at easydocs-api.gavinf.com, through the tunnel (cloudflared.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easydocs
+  annotations:
+    secrets.infisical.com/auto-reload: "true" # restart when the `easydocs` Secret changes
+spec:
+  # One is plenty for one user. The sign-in throttle is kept in memory, so more
+  # replicas would each count wrong passwords separately.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # the new pod is ready before the old one stops
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: easydocs
+  template:
+    metadata:
+      labels:
+        app: easydocs
+    spec:
+      automountServiceAccountToken: false # it never talks to the Kubernetes API
+      # Replace the pod on an unreachable node after 60s instead of the default 5 min.
+      tolerations:
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001 # the `easydocs` user in the Dockerfile
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/gavinfancher/easydocs # tag set in kustomization.yaml
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            # Plain settings.
+            - name: EASYDOCS_TITLE
+              value: easydocs
+            - name: EASYDOCS_CORS_ORIGINS # where the pages are served from
+              value: https://easydocs.gavinf.com
+            # Names only; each value comes from the `easydocs` Secret, which the
+            # Infisical operator builds (infisical-secret.yaml). Listed one by
+            # one, so the API never sees TUNNEL_TOKEN.
+            - name: EASYDOCS_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_DATABASE_URL } }
+            - name: EASYDOCS_ADMIN_PASSWORD_HASH
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_ADMIN_PASSWORD_HASH } }
+            - name: EASYDOCS_R2_ACCOUNT_ID
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_R2_ACCOUNT_ID } }
+            - name: EASYDOCS_R2_BUCKET
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_R2_BUCKET } }
+            - name: EASYDOCS_R2_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_R2_ACCESS_KEY_ID } }
+            - name: EASYDOCS_R2_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: easydocs, key: EASYDOCS_R2_SECRET_ACCESS_KEY } }
+          # Liveness never touches the database: a database outage shouldn't
+          # make Kubernetes restart a process that's fine.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            failureThreshold: 3
+          # Readiness does: no database, no traffic.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+            failureThreshold: 2
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi } # a 25 MB form upload is held in memory
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp # form uploads over 1 MB spool to /tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: easydocs
+spec:
+  selector:
+    app: easydocs
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

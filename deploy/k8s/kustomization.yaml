@@ -1,0 +1,25 @@
+# Everything easydocs runs in the cluster. Argo CD (deploy/argocd/easydocs.yaml)
+# watches this directory on main and applies it.
+#
+# Except secret values: infisical-secret.yaml tells the Infisical operator to
+# build the `easydocs` Secret from Infisical, so no credential is ever in git.
+#
+#   kubectl kustomize deploy/k8s     # see exactly what Argo will apply
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: easydocs
+
+resources:
+  - namespace.yaml
+  - api.yaml
+  - cloudflared.yaml
+  - networkpolicy.yaml
+  - infisical-secret.yaml
+
+# The one line CI changes. After every image build on main, the `release` job
+# in .github/workflows/ci.yml rewrites newTag to the new commit's short SHA
+# and pushes; Argo sees the commit and rolls the Deployment.
+images:
+  - name: ghcr.io/gavinfancher/easydocs
+    newTag: unbuilt # until CI's first run on main

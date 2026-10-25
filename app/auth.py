@@ -1,11 +1,12 @@
-"""Sign-in for the admin pages: one admin password, and a session cookie once you've given it.
+"""Sign-in: one admin password, and a session token once you've given it.
 
 The password is only kept as a scrypt hash, in EASYDOCS_ADMIN_PASSWORD_HASH. Make one with
 
     uv run python -m app.auth
 
-Sessions are random tokens. The cookie holds the token; the database holds only its hash, so a
-leaked database can't be used to sign in, and signing out really ends the session.
+Sessions are random tokens. The pages keep the token and send it as `Authorization: Bearer <token>`;
+the database holds only its hash, so a leaked database can't be used to sign in, and signing out
+really ends the session.
 """
 
 import base64
@@ -19,7 +20,6 @@ from collections import defaultdict, deque
 from app import store
 
 PASSWORD_HASH = os.environ.get("EASYDOCS_ADMIN_PASSWORD_HASH", "")
-COOKIE = "easydocs_session"
 SESSION_DAYS = 30
 SCRYPT = {"n": 2**15, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024}
 

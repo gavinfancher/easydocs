@@ -80,8 +80,63 @@ function addCopyButton(pre) {
   wrap.append(pre, btn);
 }
 
+// ---------- uploads in pages ----------
+// Docs link uploads as /uploads/<name>, but an <img> can't send the sign-in token. So pages put
+// the path in data-upload instead, then ask the API for short-lived links (presigned R2 URLs)
+// and fill those in. Each link lasts at least an hour and stays the same within it, so the
+// browser's cache keeps working.
+const UPLOAD_PREFIX = '/uploads/';
+const uploadLinks = new Map();  // name -> { url, until }
+const uploadName = path => path.slice(UPLOAD_PREFIX.length).split(/[?#]/)[0];
+
+/** Move /uploads/ paths in src/href into data-upload, before the HTML is in the page (so nothing loads them). */
+function markUploads(root) {
+  root.querySelectorAll('img[src^="/uploads/"], video[src^="/uploads/"], source[src^="/uploads/"], a[href^="/uploads/"]').forEach(el => {
+    const attr = el.tagName === 'A' ? 'href' : 'src';
+    el.dataset.upload = el.getAttribute(attr);
+    el.removeAttribute(attr);
+  });
+}
+
+/** Make sure there's a fresh link for each of these upload names. */
+async function fetchUploadLinks(names) {
+  const now = Date.now();
+  const missing = [...new Set(names)].filter(n => !(uploadLinks.get(n)?.until > now));
+  if (missing.length) {
+    try {
+      const { links } = await api('/api/uploads/links', jsonOpts('POST', { names: missing }));
+      for (const [name, url] of Object.entries(links)) {
+        uploadLinks.set(name, { url: url.startsWith('/') ? API_BASE + url : url, until: now + 50 * 60 * 1000 });
+      }
+    } catch { }
+  }
+}
+
+/** Fill in links for every [data-upload] element in root. */
+async function resolveUploads(root) {
+  const els = [...root.querySelectorAll('[data-upload]')];
+  await fetchUploadLinks(els.map(el => uploadName(el.dataset.upload)));
+  for (const el of els) {
+    const link = uploadLinks.get(uploadName(el.dataset.upload));
+    if (link) el.setAttribute(el.tagName === 'A' ? 'href' : 'src', link.url);
+  }
+}
+
+/** Open an upload in a new tab. The tab opens at once, before the link arrives, so it isn't blocked as a popup. */
+async function openUpload(path) {
+  const tab = window.open('', '_blank');
+  await fetchUploadLinks([uploadName(path)]);
+  const link = uploadLinks.get(uploadName(path));
+  if (link && tab) tab.location = link.url;
+  else { tab?.close(); toast('Couldn’t open that file'); }
+}
+
 async function renderMarkdown(src, el) {
-  el.innerHTML = DOMPurify.sanitize(marked.parse(src));
+  const tpl = document.createElement('template');  // inert: nothing in it loads yet
+  tpl.innerHTML = DOMPurify.sanitize(marked.parse(src));
+  markUploads(tpl.content);
+  el.replaceChildren(tpl.content);
+  const uploads = resolveUploads(el);
   const seen = {};
   el.querySelectorAll('h1, h2, h3, h4').forEach(h => {
     let id = slugify(h.textContent) || 'section';
@@ -96,12 +151,13 @@ async function renderMarkdown(src, el) {
     try { await mermaid.run({ nodes }); }
     catch (e) { if (run === mermaidSeq) console.warn('mermaid:', e); }
   }
+  await uploads;
 }
 
 // ---------- api ----------
 
 async function api(url, opts = {}) {
-  const res = await fetch(url, opts);
+  const res = await fetch(API_BASE + url, { ...opts, headers: auth.headers(opts.headers) });
   // Session ended while the page was open (the pages load auth.js): sign in again.
   if (res.status === 401 && typeof auth !== 'undefined') return auth.login();
   if (!res.ok) {

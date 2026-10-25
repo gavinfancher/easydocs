@@ -6,6 +6,7 @@
   <title>Editor · easydocs</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/config.js"></script>
   <script src="/static/auth.js"></script>
   <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css">
   <style>
@@ -313,11 +314,13 @@
       let sel = null;  // drag mode: { src, k } = the k-th image in the doc with this src
 
       const imgs = () => [...preview.querySelectorAll('img')];
+      // What the markdown says: an upload's /uploads/ path, not the short-lived link shown.
+      const srcOf = img => img.dataset.upload || img.getAttribute('src');
       const keyOf = img => {
-        const src = img.getAttribute('src');
-        return { src, k: imgs().filter(i => i.getAttribute('src') === src).indexOf(img) };
+        const src = srcOf(img);
+        return { src, k: imgs().filter(i => srcOf(i) === src).indexOf(img) };
       };
-      const current = () => sel && imgs().filter(i => i.getAttribute('src') === sel.src)[sel.k];
+      const current = () => sel && imgs().filter(i => srcOf(i) === sel.src)[sel.k];
 
       function place() {
         const img = current();
@@ -363,13 +366,13 @@
           label, icon: w === width ? 'check' : null,
           action: () => { img.style.width = width; apply(key, width); },
         });
-        const url = new URL(img.getAttribute('src'), location.href).href;
+        const upload = img.dataset.upload, url = upload || new URL(img.getAttribute('src'), location.href).href;
         showMenu(img, [
           size('Small (25%)', '25%'), size('Medium (50%)', '50%'), size('Large (75%)', '75%'), size('Full size', ''),
           { label: 'Custom size…', icon: 'move', hint: ['', '25%', '50%', '75%'].includes(w) ? 'Drag to resize' : `Now ${w}`,
             action: () => startDrag(img) },
           'sep',
-          { label: 'Open image in new tab', icon: 'external', action: () => window.open(url, '_blank') },
+          { label: 'Open image in new tab', icon: 'external', action: () => upload ? openUpload(upload) : window.open(url, '_blank') },
           { label: 'Copy image link', icon: 'link', action: async () => {
               try { await navigator.clipboard.writeText(url); toast('Link copied'); }
               catch { await askText('Copy this link', url, { okLabel: 'Done' }); } } },
@@ -722,7 +725,7 @@
       const linkItems = !link ? [] : [
         { label: 'Edit link…', icon: 'link', shortcut: 'Mod+K', action: () => insertLink(link) },
         { label: 'Open link', icon: 'external', disabled: !link.url,
-          action: () => window.open(new URL(link.url, location.origin).href, '_blank') },
+          action: () => link.url.startsWith(UPLOAD_PREFIX) ? openUpload(link.url) : window.open(new URL(link.url, location.origin).href, '_blank') },
         { label: 'Copy link address', icon: 'copy', disabled: !link.url,
           action: () => copyText(new URL(link.url, location.origin).href, 'Link copied') },
         'sep',

@@ -308,11 +308,20 @@ function setupTree(el) {
 
 // ---------- uploads ----------
 
+/** Upload a file: the API hands out a presigned URL and the browser sends the file straight to it (R2). */
 async function uploadFile(file, folder = '') {
-  const fd = new FormData();
-  fd.append('file', file, file.name || 'pasted.png');
-  fd.append('folder', folder);
-  return api('/admin/api/uploads', { method: 'POST', body: fd });
+  const filename = file.name || 'pasted.png';
+  const started = await api('/admin/api/uploads/start',
+    jsonOpts('POST', { filename, content_type: file.type, size: file.size }));
+  const { method, url, headers } = started.upload;
+  // A presigned R2 URL, or (without R2) a path on the API, which needs the token.
+  const local = url.startsWith('/');
+  let res;
+  try { res = await fetch(local ? API_BASE + url : url, { method, headers: local ? auth.headers(headers) : headers, body: file }); }
+  catch { throw new Error('Couldn’t reach file storage'); }
+  if (!res.ok) throw new Error(`File storage said ${res.status}`);
+  const done = await api(`/admin/api/uploads/${encodeURIComponent(started.file)}/finish`, jsonOpts('POST', { folder }));
+  return { ...done, name: started.name };
 }
 
 const displayName = n => n.replace(/-[0-9a-f]{8}(\.\w+)$/, '$1');
@@ -413,7 +422,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
       const used = usedCount(it);
       return `<div class="lib-card" data-name="${escapeHtml(it.name)}" draggable="true">
         <button class="lib-thumb" data-act="${onInsert ? 'insert' : 'open'}" title="${onInsert ? 'Insert into doc' : 'Open file'}" draggable="false">
-          ${it.is_image ? `<img src="${escapeHtml(it.url)}" alt="" loading="lazy" draggable="false">` : escapeHtml(it.name.split('.').pop().toUpperCase())}
+          ${it.is_image ? `<img data-upload="${escapeHtml(it.url)}" alt="" loading="lazy" draggable="false">` : escapeHtml(it.name.split('.').pop().toUpperCase())}
         </button>
         <div class="lib-info">
           <div class="lib-name" title="${escapeHtml(displayName(it.name))}">${escapeHtml(displayName(it.name))}</div>
@@ -428,6 +437,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
         </div>
       </div>`;
     }).join('');
+    resolveUploads(grid);
   }
 
   // ---------- file actions ----------
@@ -437,7 +447,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
     showMenu(anchor, [
       ...(onInsert ? [{ label: 'Insert into doc', icon: 'plus', action: () => onInsert(item) }] : []),
       { label: 'Copy markdown', icon: 'copy', action: () => copyMarkdown(item) },
-      { label: 'Open file', icon: 'external', action: () => window.open(item.url, '_blank') },
+      { label: 'Open file', icon: 'external', action: () => openUpload(item.url) },
       'sep',
       { label: 'Rename…', icon: 'edit', action: () => renameFile(item) },
       { label: 'Move to folder…', icon: 'move', action: () => moveFile(item) },
@@ -501,7 +511,7 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
     const el = e.target.closest('[data-act]'); if (!el) return;
     const item = itemFor(el); if (!item) return;
     const act = el.dataset.act;
-    if (act === 'open') window.open(item.url, '_blank');
+    if (act === 'open') openUpload(item.url);
     if (act === 'insert') onInsert(item);
     if (act === 'copy') copyMarkdown(item);
     if (act === 'menu') fileMenu(item, el);

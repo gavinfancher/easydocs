@@ -1,0 +1,100 @@
+# Test the API, publish its image to GHCR, then hand it to Argo CD.
+#
+#   ghcr.io/<owner>/easydocs:<short sha>   one per commit; the only tag
+#
+# test runs everywhere. image and release run only for main. release commits
+# the new tag to deploy/k8s/kustomization.yaml; Argo CD, watching main, sees
+# that commit and rolls the cluster. Nothing here can reach the cluster.
+# (The pages, in web/, are deployed by Cloudflare Workers Builds, not here.)
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "tests/**", "Dockerfile", "pyproject.toml", "uv.lock", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["app/**", "tests/**", "Dockerfile", "pyproject.toml", "uv.lock", ".github/workflows/ci.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # A throwaway Postgres for this run only. The tests wipe its tables.
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 2s --health-retries 15
+    env:
+      EASYDOCS_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.12.23/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: uv run pytest -q
+
+  image:
+    needs: test
+    # Only main publishes. Pull requests and other branches just run the tests.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io/<owner>/*
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64 # the cluster nodes are x86_64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/easydocs:${{ steps.tag.outputs.tag }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: image
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag bump to main
+    # One release at a time, so two quick merges can't race each other to main.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Point deploy/k8s at the new image
+        env:
+          TAG: ${{ needs.image.outputs.tag }}
+        run: |
+          sed -i -E "s/^(    newTag: ).*/\1${TAG}/" deploy/k8s/kustomization.yaml
+          git diff --exit-code --quiet && { echo "already at ${TAG}"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy: easydocs ${TAG}"
+          # main may have moved while we built; replay our one-line change on top.
+          # A push made with GITHUB_TOKEN doesn't start another workflow run, so
+          # this can't loop.
+          git pull --rebase origin main
+          git push origin HEAD:main
