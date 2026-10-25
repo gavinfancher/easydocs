@@ -28,6 +28,7 @@ Ten wrong passwords from one IP pause logins for 15 minutes.
 | API and pages (FastAPI) | `app/main.py` |
 | Postgres access, table layout | `app/store.py` |
 | Admin password and sessions | `app/auth.py`, `app/static/login.html` |
+| Editor text area (CodeMirror; links fold to a chip, markdown unchanged) | `app/static/text-editor.js`, rebuilt with `scripts/build-codemirror.sh` |
 | Production containers (app + cloudflared) | `deploy/compose.yml` |
 | VM setup | `deploy/cloud-init.yaml` |
 

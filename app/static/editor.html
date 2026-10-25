@@ -26,11 +26,25 @@
     .statusbar > span { overflow: hidden; text-overflow: ellipsis; }
     .statusbar > span:first-child { flex: 1; min-width: 0; }
     .panes > * { flex: 1; min-width: 0; overflow-y: auto; }
-    #editor {
-      border: none; resize: none; outline: none; padding: 24px 28px 80px;
-      background: var(--bg); color: var(--text);
-      font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2;
+    #editor { overflow: hidden; background: var(--bg); }
+    #editor .cm-editor { height: 100%; background: var(--bg); color: var(--text); }
+    #editor .cm-editor.cm-focused { outline: none; }
+    #editor .cm-scroller { font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; }
+    #editor .cm-content { padding: 24px 28px 80px; caret-color: var(--text); }
+    #editor .cm-line { padding: 0; }
+    #editor .cm-placeholder { color: var(--text-faint); }
+    #editor .cm-link-chip {
+      display: inline-flex; align-items: center; vertical-align: -2px; height: 1.25em; padding: 0 3px; margin-left: 2px;
+      border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-faint); cursor: pointer;
     }
+    #editor .cm-link-chip:hover { color: var(--accent-text); border-color: var(--accent); }
+    #editor .cm-link-chip .ico { width: 12px; height: 12px; }
+    #editor .cm-panels { background: var(--bg-soft); color: var(--text); border-color: var(--border); }
+    #editor .cm-panel.cm-search { font-family: inherit; font-size: 13px; }
+    #editor .cm-textfield { background: var(--bg-elv); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); }
+    #editor .cm-button { background: var(--bg-elv); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); }
+    #editor .cm-searchMatch { background: var(--accent-soft); }
+    #editor .cm-searchMatch-selected { background: #6b3a10; }
     #preview-pane { border-left: 1px solid var(--border); position: relative; }
     #preview img { cursor: context-menu; }
     .img-tools { position: absolute; pointer-events: none; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); z-index: 5; }
@@ -57,7 +71,7 @@
     @media (max-width: 800px) {
       body:not(.editor-hidden) #preview-pane { display: none; }
       #preview-pane { border-left: none; }
-      #editor { padding: 16px; }
+      #editor .cm-content { padding: 16px; }
     }
 
     .sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 10px 8px; }
@@ -103,7 +117,7 @@
           <input type="file" id="file-input" multiple hidden>
         </div>
         <div class="panes">
-          <textarea id="editor" spellcheck="true" placeholder="Start writing… Paste or drop images right here."></textarea>
+          <div id="editor"></div>
           <div id="preview-pane"><article class="markdown" id="preview"></article></div>
         </div>
         <div class="statusbar" aria-live="off">
@@ -139,10 +153,13 @@
   <script src="/static/vendor/purify.min.js"></script>
   <script src="/static/vendor/highlight.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/vendor/codemirror.min.js"></script>
   <script src="/static/common.js"></script>
   <script src="/static/admin.js"></script>
+  <script src="/static/text-editor.js"></script>
   <script>
-    const editor = $('editor'), preview = $('preview'), statusEl = $('status');
+    const editor = createTextEditor($('editor'), { placeholder: 'Start writing… Paste or drop images right here.' });
+    const preview = $('preview'), statusEl = $('status');
     let current = null;       // path of the open doc
     let savedContent = '';
 
@@ -401,17 +418,12 @@
       $('sb-pos').textContent = `Ln ${line}, Col ${col}` + (sel ? ` (${sel} selected)` : '');
       $('sb-words').textContent = `${words.toLocaleString()} word${words === 1 ? '' : 's'}`;
     }
-    ['input', 'keyup', 'click', 'select', 'focus'].forEach(ev => editor.addEventListener(ev, updateStatusbar));
+    editor.addEventListener('select', updateStatusbar);
 
     // ---------- text editing ----------
     function insertText(text) {
       editor.focus();
-      if (!text && editor.selectionStart === editor.selectionEnd) return;
-      // execCommand keeps the browser's undo history working; fall back if unsupported.
-      if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
-        editor.setRangeText(text, editor.selectionStart, editor.selectionEnd, 'end');
-        editor.dispatchEvent(new Event('input'));
-      }
+      editor.replaceSelection(text);
     }
     function wrap(marker, fallback = 'text') {
       const { selectionStart: s, selectionEnd: e } = editor;
@@ -431,25 +443,15 @@
     }
 
     // ---------- links ----------
-    // A link is inline, [text](url), or hidden: [text][hidden link 2], with its url on a
-    // "[hidden link 2]: url" line at the end of the doc. Both render the same.
+    // Links stay plain [text](url) in the markdown; the editor just folds the (url) away (see text-editor.js).
     const INLINE_LINK = /(?<!!)\[((?:\\.|[^\]\\\n])*)\]\(\s*<?([^\s)>]*)>?(?:\s+"[^"]*")?\s*\)/g;
-    const HIDDEN_LINK = /(?<!!)\[((?:\\.|[^\]\\\n])*)\]\[(hidden link (\d+))\]/gi;
-    const linkDef = label => new RegExp(`^ {0,3}\\[${label}\\]:[ \\t]*<?([^\\s>]*)>?.*(?:\\n|$)`, 'mi');
     const escLabel = t => t.replace(/([\[\]\\])/g, '\\$1');
     const unescLabel = t => t.replace(/\\([\[\]\\])/g, '$1');
 
     /** The link the cursor is in, if any. */
     function linkAt(pos) {
-      const v = editor.value;
-      const hit = re => [...v.matchAll(re)].find(m => m.index <= pos && pos <= m.index + m[0].length);
-      let m = hit(INLINE_LINK);
-      if (m) return { start: m.index, end: m.index + m[0].length, text: unescLabel(m[1]), url: m[2], hidden: false };
-      m = hit(HIDDEN_LINK);
-      if (!m) return null;
-      const def = linkDef(m[2]).exec(v);
-      return { start: m.index, end: m.index + m[0].length, text: unescLabel(m[1]), url: def ? def[1] : '',
-               hidden: true, label: m[2], def };
+      const m = [...editor.value.matchAll(INLINE_LINK)].find(m => m.index <= pos && pos <= m.index + m[0].length);
+      return m && { start: m.index, end: m.index + m[0].length, text: unescLabel(m[1]), url: m[2] };
     }
 
     /** "example.com/x" means a website; "/docs/x", "#part", "mailto:…" and "https://…" stay as typed. */
@@ -469,40 +471,9 @@
         ],
       });
       if (!r || !r.url) { editor.focus(); return; }
-      const url = fixUrl(r.url), text = escLabel(r.text || r.url);
-      if (!link) {
-        editor.setSelectionRange(s, e);
-        insertText(`[${text}](${url})`);
-      } else if (!link.hidden) {
-        replaceRanges([[link.start, link.end, `[${text}](${url})`]], link.start);
-      } else {
-        const edits = [[link.start, link.end, `[${text}][${link.label}]`]];
-        if (link.def) edits.push([link.def.index, link.def.index + link.def[0].length, `[${link.label}]: ${url}\n`]);
-        replaceRanges(edits, link.start);
-      }
-    }
-
-    /** Swap [text](url) for [text][hidden link N], so the url moves out of the way to the end of the doc. */
-    function hideLink(link) {
-      const v = editor.value;
-      const n = Math.max(0, ...[...v.matchAll(/\[hidden link (\d+)\]/gi)].map(m => +m[1])) + 1;
-      const label = `hidden link ${n}`;
-      const body = v.replace(/\s+$/, ''), last = body.slice(body.lastIndexOf('\n') + 1);
-      const sep = /^ {0,3}\[hidden link \d+\]:/i.test(last) ? '\n' : '\n\n';  // keep the hidden links together
-      replaceRanges([
-        [body.length, v.length, `${sep}[${label}]: ${link.url}\n`],
-        [link.start, link.end, `[${escLabel(link.text)}][${label}]`],
-      ], link.start);
-    }
-    function showLink(link) {
-      if (!link.def) { toast(`Couldn’t find the “[${link.label}]: …” line for that link.`); return; }
-      const v = editor.value, end = link.def.index + link.def[0].length;
-      // The last hidden link going: take the blank lines before it too.
-      const start = v.slice(end).trim() ? link.def.index : v.slice(0, link.def.index).replace(/\s+$/, '').length;
-      replaceRanges([
-        [start, end, start < link.def.index ? '\n' : ''],
-        [link.start, link.end, `[${escLabel(link.text)}](${link.url})`],
-      ], link.start);
+      const md = `[${escLabel(r.text || r.url)}](${fixUrl(r.url)})`;
+      if (link) replaceRanges([[link.start, link.end, md]], link.start + md.length);
+      else { editor.setSelectionRange(s, e); insertText(md); }
     }
 
     $('link-btn').onclick = () => insertLink();
@@ -624,7 +595,7 @@
       const caret = editor.selectionStart;
       editor.setSelectionRange(i, i + token.length);
       if (replacement) insertText(replacement);
-      else { editor.setRangeText('', i, i + token.length); editor.dispatchEvent(new Event('input')); }
+      else insertText('');
       const pos = caret > i ? caret + replacement.length - token.length : caret;
       editor.setSelectionRange(pos, pos);
     }
@@ -750,14 +721,14 @@
       const link = linkAt(editor.selectionStart);
       const linkItems = !link ? [] : [
         { label: 'Edit link…', icon: 'link', shortcut: 'Mod+K', action: () => insertLink(link) },
-        link.hidden
-          ? { label: 'Show link', icon: 'eye', hint: 'Put the address back inline', action: () => showLink(link) }
-          : { label: 'Hide link', icon: 'eye', hint: 'Move the address to the end of the doc', action: () => hideLink(link) },
         { label: 'Open link', icon: 'external', disabled: !link.url,
           action: () => window.open(new URL(link.url, location.origin).href, '_blank') },
+        { label: 'Copy link address', icon: 'copy', disabled: !link.url,
+          action: () => copyText(new URL(link.url, location.origin).href, 'Link copied') },
         'sep',
       ];
-      showMenu(editor, [
+      const shown = editor.showAddresses;
+      showMenu(editor.dom, [
         ...linkItems,
         { label: 'Cut', icon: 'cut', shortcut: 'Mod+X', disabled: !has, action: () => clip('cut') },
         { label: 'Copy', icon: 'copy', shortcut: 'Mod+C', disabled: !has, action: () => clip('copy') },
@@ -791,6 +762,9 @@
           { label: 'Mermaid diagram', icon: 'diagram', action: () => insertText(ownLine(MERMAID)) },
         ] },
         'sep',
+        { label: shown ? 'Fold link addresses' : 'Show link addresses', icon: 'eye',
+          hint: shown ? 'Show links as text and a link icon' : 'Show every link’s full address',
+          action: () => { editor.showAddresses = !shown; } },
         { label: 'Select all', icon: 'selectAll', shortcut: 'Mod+A', action: () => { editor.focus(); editor.select(); } },
       ], e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : null);
     });
