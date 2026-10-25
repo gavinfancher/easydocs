@@ -2,7 +2,7 @@
 
 A small self-hosted markdown docs site, with a web editor. Live at https://easydocs.gavinf.com.
 
-- **`/`**: read-only docs site: a home page, then sidebar, search and diagrams
+- **`/`**: the docs site (signed-in only): a home page, then sidebar, search and diagrams
 - **`/admin/`**: admin panel. Organize docs and folders, and manage uploads
 - **`/admin/edit`**: the editor, with live preview
 
@@ -18,8 +18,9 @@ The tunnel dials out from the VM, so nothing on the network is opened to the int
 everything (docs, settings, uploaded files and sign-in sessions), so the VM keeps no state and can be
 rebuilt from `deploy/cloud-init.yaml`.
 
-Reading is public. The admin panel and editor need the admin password: you sign in at `/admin/login`
-and get a session cookie (30 days, HttpOnly, Secure, SameSite=Strict) that signing out really ends.
+The whole site needs the admin password, reading included (only the login page and `/static` are
+open). You sign in at `/admin/login` and get a session cookie (30 days, HttpOnly, Secure,
+SameSite=Strict) that signing out really ends.
 Ten wrong passwords from one IP pause logins for 15 minutes.
 
 | Piece | Where |

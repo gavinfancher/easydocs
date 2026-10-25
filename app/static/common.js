@@ -102,8 +102,8 @@ async function renderMarkdown(src, el) {
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
-  // Session ended while the page was open (admin pages load auth.js): sign in again.
-  if (res.status === 401 && url.startsWith('/admin/api/') && typeof auth !== 'undefined') return auth.login();
+  // Session ended while the page was open (the pages load auth.js): sign in again.
+  if (res.status === 401 && typeof auth !== 'undefined') return auth.login();
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail || msg; } catch { }

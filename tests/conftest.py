@@ -33,5 +33,5 @@ def anon():
 def client(anon):
     """A signed-in admin."""
     r = anon.post("/admin/login", data={"password": PASSWORD}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/admin/"
+    assert r.status_code == 303 and r.headers["location"] == "/"
     return anon

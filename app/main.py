@@ -4,8 +4,8 @@ Docs, folders, settings and uploaded files all live in Postgres (see store.py).
 Uploads are referenced by absolute URLs (/uploads/<name>), so moving a doc never breaks
 its images. Upload folders are only labels, so filing an upload never changes its URL.
 
-Reading is public. Everything under /admin needs the admin password (see auth.py), except
-with EASYDOCS_LOCAL=1, for local dev (see compose.yml).
+The whole site, reading included, needs the admin password (see auth.py), except with
+EASYDOCS_LOCAL=1, for local dev (see compose.yml). Only the login page and /static stay open.
 """
 
 import os
@@ -102,14 +102,24 @@ def same_origin(request: Request) -> bool:
     return urlsplit(source).netloc == request.headers.get("host")
 
 
+# Open without signing in: the login page, the CSS/JS/icons it needs, and whether you are signed in.
+PUBLIC_PATHS = {"/admin/login", "/api/session"}
+PUBLIC_PREFIXES = ("/static/",)
+
+
+def is_public(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    if LOGIN_REQUIRED and (path == "/admin" or path.startswith("/admin/")) and path != "/admin/login":
+    if LOGIN_REQUIRED and not is_public(path):
         if not await run_in_threadpool(auth.valid_session, request.cookies.get(auth.COOKIE)):
-            if path.startswith("/admin/api/"):
+            if path.startswith(("/api/", "/admin/api/", "/uploads/")):
                 return JSONResponse({"detail": "Sign in first"}, status_code=401)
-            return RedirectResponse("/admin/login?next=" + quote(path), status_code=303)
+            target = path + ("?" + request.url.query if request.url.query else "")
+            return RedirectResponse("/admin/login?next=" + quote(target), status_code=303)
         # The cookie is SameSite=Strict already; this is a second lock against cross-site requests.
         if request.method not in ("GET", "HEAD") and not same_origin(request):
             return JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
@@ -562,9 +572,10 @@ def delete_upload(name: str):
 # ---------- sign in / out ----------
 
 @app.post("/admin/login")
-def login(request: Request, password: str = Form(""), next: str = Form("/admin/")):
-    # Only ever send people on to an admin page, never off-site.
-    next = next if next.startswith("/admin") and not next.startswith("/admin/login") else "/admin/"
+def login(request: Request, password: str = Form(""), next: str = Form("/")):
+    # Only ever send people on to a page of this site, never off-site.
+    local = next.startswith("/") and not next.startswith(("//", "/\\")) and not next.startswith("/admin/login")
+    next = next if local else "/"
     ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
     if not same_origin(request):
         raise HTTPException(403, "Cross-site request refused")
@@ -582,14 +593,14 @@ def login(request: Request, password: str = Form(""), next: str = Form("/admin/"
 @app.post("/admin/logout")
 def logout(request: Request):
     auth.end_session(request.cookies.get(auth.COOKIE))
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/admin/login", status_code=303)
     response.delete_cookie(auth.COOKIE, path="/")
     return response
 
 
 @app.get("/api/session")
 def session(request: Request):
-    """Whether this visitor can use the admin pages (the pages use it to show Sign out)."""
+    """Whether this visitor is signed in (the pages use it to show Sign out)."""
     return {"login_required": LOGIN_REQUIRED,
             "signed_in": not LOGIN_REQUIRED or auth.valid_session(request.cookies.get(auth.COOKIE))}
 

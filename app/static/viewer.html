@@ -7,6 +7,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/vendor/hljs-github-dark.min.css">
+  <script src="/static/auth.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -15,6 +16,7 @@
     <div class="spacer"></div>
     <input class="search" id="search" type="search" placeholder="Search docs…" autocomplete="off">
     <a class="btn" href="/admin/" title="Admin panel">Admin</a>
+    <button class="btn hide-mobile" id="sign-out" hidden>Sign out</button>
   </header>
   <div class="layout">
     <nav class="sidebar" id="sidebar"></nav>

@@ -26,12 +26,12 @@
 </head>
 <body>
   <header class="topbar">
-    <a href="/" class="brand">easydocs</a>
+    <span class="brand">easydocs</span>
   </header>
   <div class="login-wrap">
     <form class="login" method="post" action="/admin/login">
       <h1>Sign in</h1>
-      <p>The admin panel and editor need the admin password.</p>
+      <p>This site needs the admin password.</p>
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
       <div class="error" id="error" hidden></div>
@@ -41,7 +41,7 @@
   </div>
   <script>
     const params = new URLSearchParams(location.search);
-    document.getElementById('next').value = params.get('next') || '/admin/';
+    document.getElementById('next').value = params.get('next') || '/';
     const messages = { wrong: 'That password isn’t right.', throttled: 'Too many tries. Wait 15 minutes, then try again.' };
     const error = document.getElementById('error');
     if (messages[params.get('error')]) { error.textContent = messages[params.get('error')]; error.hidden = false; }

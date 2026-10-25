@@ -406,8 +406,9 @@
     // ---------- text editing ----------
     function insertText(text) {
       editor.focus();
+      if (!text && editor.selectionStart === editor.selectionEnd) return;
       // execCommand keeps the browser's undo history working; fall back if unsupported.
-      if (!document.execCommand('insertText', false, text)) {
+      if (!document.execCommand(text ? 'insertText' : 'delete', false, text)) {
         editor.setRangeText(text, editor.selectionStart, editor.selectionEnd, 'end');
         editor.dispatchEvent(new Event('input'));
       }
@@ -418,15 +419,93 @@
       insertText(marker + sel + marker);
       editor.setSelectionRange(s + marker.length, s + marker.length + sel.length);
     }
-    async function insertLink() {
-      const { selectionStart: s, selectionEnd: e } = editor;
-      const label = editor.value.slice(s, e) || 'link text';
-      const url = await askText('Link to a URL, or a doc like /docs/guides/setup', 'https://', { okLabel: 'Insert link' });
-      if (!url) return;
-      editor.setSelectionRange(s, e);
-      insertText(`[${label}](${url})`);
+    /** Make several replacements, back to front so the earlier offsets stay right. Each one is undoable. */
+    function replaceRanges(edits, caret) {
+      const { scrollTop } = editor;
+      for (const [start, end, text] of edits.sort((a, b) => b[0] - a[0])) {
+        editor.setSelectionRange(start, end);
+        insertText(text);
+      }
+      editor.setSelectionRange(caret, caret);
+      editor.scrollTop = scrollTop;
     }
-    $('link-btn').onclick = insertLink;
+
+    // ---------- links ----------
+    // A link is inline, [text](url), or hidden: [text][hidden link 2], with its url on a
+    // "[hidden link 2]: url" line at the end of the doc. Both render the same.
+    const INLINE_LINK = /(?<!!)\[((?:\\.|[^\]\\\n])*)\]\(\s*<?([^\s)>]*)>?(?:\s+"[^"]*")?\s*\)/g;
+    const HIDDEN_LINK = /(?<!!)\[((?:\\.|[^\]\\\n])*)\]\[(hidden link (\d+))\]/gi;
+    const linkDef = label => new RegExp(`^ {0,3}\\[${label}\\]:[ \\t]*<?([^\\s>]*)>?.*(?:\\n|$)`, 'mi');
+    const escLabel = t => t.replace(/([\[\]\\])/g, '\\$1');
+    const unescLabel = t => t.replace(/\\([\[\]\\])/g, '$1');
+
+    /** The link the cursor is in, if any. */
+    function linkAt(pos) {
+      const v = editor.value;
+      const hit = re => [...v.matchAll(re)].find(m => m.index <= pos && pos <= m.index + m[0].length);
+      let m = hit(INLINE_LINK);
+      if (m) return { start: m.index, end: m.index + m[0].length, text: unescLabel(m[1]), url: m[2], hidden: false };
+      m = hit(HIDDEN_LINK);
+      if (!m) return null;
+      const def = linkDef(m[2]).exec(v);
+      return { start: m.index, end: m.index + m[0].length, text: unescLabel(m[1]), url: def ? def[1] : '',
+               hidden: true, label: m[2], def };
+    }
+
+    /** "example.com/x" means a website; "/docs/x", "#part", "mailto:…" and "https://…" stay as typed. */
+    const fixUrl = url => /^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]|$)/.test(url) && !/^[\w+.-]+:\/\//.test(url)
+      ? 'https://' + url : url.replace(/ /g, '%20');
+
+    async function insertLink(link = null) {
+      const { selectionStart: s, selectionEnd: e } = editor;
+      if (!link && s === e) link = linkAt(s);  // Mod+K inside a link edits it
+      const r = await appDialog({
+        title: link ? 'Edit link' : 'Insert link', okLabel: link ? 'Save' : 'Insert link',
+        fields: [
+          { name: 'text', label: 'Text to show', value: link ? link.text : editor.value.slice(s, e),
+            placeholder: 'Leave empty to show the link itself' },
+          { name: 'url', label: 'Link to', value: link ? link.url : '',
+            placeholder: 'A web address, or a doc like /docs/guides/setup' },
+        ],
+      });
+      if (!r || !r.url) { editor.focus(); return; }
+      const url = fixUrl(r.url), text = escLabel(r.text || r.url);
+      if (!link) {
+        editor.setSelectionRange(s, e);
+        insertText(`[${text}](${url})`);
+      } else if (!link.hidden) {
+        replaceRanges([[link.start, link.end, `[${text}](${url})`]], link.start);
+      } else {
+        const edits = [[link.start, link.end, `[${text}][${link.label}]`]];
+        if (link.def) edits.push([link.def.index, link.def.index + link.def[0].length, `[${link.label}]: ${url}\n`]);
+        replaceRanges(edits, link.start);
+      }
+    }
+
+    /** Swap [text](url) for [text][hidden link N], so the url moves out of the way to the end of the doc. */
+    function hideLink(link) {
+      const v = editor.value;
+      const n = Math.max(0, ...[...v.matchAll(/\[hidden link (\d+)\]/gi)].map(m => +m[1])) + 1;
+      const label = `hidden link ${n}`;
+      const body = v.replace(/\s+$/, ''), last = body.slice(body.lastIndexOf('\n') + 1);
+      const sep = /^ {0,3}\[hidden link \d+\]:/i.test(last) ? '\n' : '\n\n';  // keep the hidden links together
+      replaceRanges([
+        [body.length, v.length, `${sep}[${label}]: ${link.url}\n`],
+        [link.start, link.end, `[${escLabel(link.text)}][${label}]`],
+      ], link.start);
+    }
+    function showLink(link) {
+      if (!link.def) { toast(`Couldn’t find the “[${link.label}]: …” line for that link.`); return; }
+      const v = editor.value, end = link.def.index + link.def[0].length;
+      // The last hidden link going: take the blank lines before it too.
+      const start = v.slice(end).trim() ? link.def.index : v.slice(0, link.def.index).replace(/\s+$/, '').length;
+      replaceRanges([
+        [start, end, start < link.def.index ? '\n' : ''],
+        [link.start, link.end, `[${escLabel(link.text)}](${link.url})`],
+      ], link.start);
+    }
+
+    $('link-btn').onclick = () => insertLink();
     $('code-btn').onclick = () => { editor.focus(); codeBlock(); };
 
     /** Images go on their own line so they don't run into the surrounding text. */
@@ -438,12 +517,81 @@
       return lead + md + trail;
     }
 
+    // ---------- lists: Enter keeps you at the same level, Shift+Enter steps out one ----------
+    const LIST_ITEM = /^([ \t]*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?/;
+    const INDENT = '  ';
+    const dedent = s => s.replace(/^(\t| {1,2})/, '');
+    /** The marker for the item after this one: numbers count up, checkboxes start unticked. */
+    const nextMarker = m => (/\d/.test(m[2]) ? parseInt(m[2]) + 1 + m[2].slice(-1) : m[2]) + m[3] + (m[4] ? '[ ] ' : '');
+    function lineAt(pos) {
+      const v = editor.value, start = v.lastIndexOf('\n', pos - 1) + 1;
+      const end = v.indexOf('\n', pos) === -1 ? v.length : v.indexOf('\n', pos);
+      return { start, end, text: v.slice(start, end) };
+    }
+    /** The nearest list item above `pos` indented exactly `width`, or null once something sits further left. */
+    function itemAbove(pos, width) {
+      const lines = editor.value.slice(0, pos).split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].trim()) continue;
+        const lead = lines[i].match(/^[ \t]*/)[0].length;
+        if (lead === width) return lines[i].match(LIST_ITEM);
+        if (lead < width) return null;
+      }
+      return null;
+    }
+    /** The start of a new item one level out from `m`, numbered on from its parent. */
+    function outerItem(line, m) {
+      const indent = dedent(m[1]), parent = itemAbove(line.start, indent.length);
+      return indent + (parent ? nextMarker(parent) : m[2].replace(/^\d+/, '1') + m[3] + (m[4] ? '[ ] ' : ''));
+    }
+    /** Enter in a list. Returns false to let the browser do a plain Enter. */
+    function listEnter(out) {
+      const { selectionStart: s, selectionEnd: e } = editor;
+      const line = lineAt(s), m = line.text.match(LIST_ITEM);
+      if (!m) {
+        // Indented text under an item: stay in its column (Shift+Enter: one level out).
+        const lead = line.text.match(/^[ \t]*/)[0];
+        if (!lead || s < line.start + lead.length) return false;
+        insertText('\n' + (out ? dedent(lead) : lead));
+        return true;
+      }
+      if (s < line.start + m[0].length) return false;  // cursor is in the marker itself
+      if (s === e && !line.text.slice(m[0].length).trim()) {
+        // Enter on an empty item steps out a level, and out of the list at the top.
+        replaceRanges([[line.start, line.end, m[1] ? outerItem(line, m) : '']], line.start);
+        const at = lineAt(line.start).end;
+        editor.setSelectionRange(at, at);
+        return true;
+      }
+      if (!out) insertText('\n' + m[1] + nextMarker(m));
+      else insertText(m[1] ? '\n' + outerItem(line, m) : '\n\n');
+      return true;
+    }
+    /** Tab: on a list item (or with lines selected), indent the whole line; otherwise type spaces. */
+    function indent() {
+      const { selectionStart: s, selectionEnd: e } = editor, line = lineAt(s);
+      if (e > line.end) return editLines(ls => ls.map(l => l.trim() ? INDENT + l : l));
+      if (!LIST_ITEM.test(line.text)) return insertText(INDENT);
+      replaceRanges([[line.start, line.start, INDENT]], s + INDENT.length);
+      if (e > s) editor.setSelectionRange(s + INDENT.length, e + INDENT.length);
+    }
+    function outdentLines() {
+      const { selectionStart: s, selectionEnd: e } = editor, line = lineAt(s);
+      if (e > line.end) return editLines(ls => ls.map(dedent));
+      const cut = line.text.length - dedent(line.text).length;
+      if (!cut) return;
+      replaceRanges([[line.start, line.start + cut, '']], Math.max(line.start, s - cut));
+      if (e > s) editor.setSelectionRange(Math.max(line.start, s - cut), e - cut);
+    }
+
     editor.addEventListener('keydown', e => {
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === 'b') { e.preventDefault(); wrap('**'); }
       else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyI') { e.preventDefault(); codeBlock(); }
       else if (mod && e.shiftKey && e.code === 'KeyI') { e.preventDefault(); wrap('_'); }
       else if (mod && e.key === 'k') { e.preventDefault(); insertLink(); }
+      else if (e.key === 'Enter' && !mod && !e.altKey && !e.isComposing) { if (listEnter(e.shiftKey)) e.preventDefault(); }
+      else if (e.key === 'Tab' && !mod && !e.altKey) { e.preventDefault(); e.shiftKey ? outdentLines() : indent(); }
       else if (mod && !e.shiftKey && e.key === 'e') { e.preventDefault(); wrap('`', 'code'); }
       else if (mod && e.shiftKey && e.code === 'KeyX') { e.preventDefault(); wrap('~~'); }
       else if (mod && e.altKey && /^Digit[0-3]$/.test(e.code)) { e.preventDefault(); setHeading(+e.code.slice(5)); }
@@ -451,7 +599,6 @@
       else if (mod && e.shiftKey && e.code === 'Digit7') { e.preventDefault(); numberedList(); }
       else if (mod && e.shiftKey && e.code === 'Digit9') { e.preventDefault(); checklist(); }
       else if (mod && e.shiftKey && e.code === 'Period') { e.preventDefault(); quote(); }
-      else if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); insertText('  '); }
     });
     document.addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
@@ -600,7 +747,18 @@
       if (e.shiftKey) return;  // Shift+right-click: the browser's own menu (spelling suggestions)
       e.preventDefault();
       const has = editor.selectionEnd > editor.selectionStart;
+      const link = linkAt(editor.selectionStart);
+      const linkItems = !link ? [] : [
+        { label: 'Edit link…', icon: 'link', shortcut: 'Mod+K', action: () => insertLink(link) },
+        link.hidden
+          ? { label: 'Show link', icon: 'eye', hint: 'Put the address back inline', action: () => showLink(link) }
+          : { label: 'Hide link', icon: 'eye', hint: 'Move the address to the end of the doc', action: () => hideLink(link) },
+        { label: 'Open link', icon: 'external', disabled: !link.url,
+          action: () => window.open(new URL(link.url, location.origin).href, '_blank') },
+        'sep',
+      ];
       showMenu(editor, [
+        ...linkItems,
         { label: 'Cut', icon: 'cut', shortcut: 'Mod+X', disabled: !has, action: () => clip('cut') },
         { label: 'Copy', icon: 'copy', shortcut: 'Mod+C', disabled: !has, action: () => clip('copy') },
         { label: 'Paste', icon: 'paste', shortcut: 'Mod+V', action: paste },
@@ -624,7 +782,7 @@
           { label: 'Code block', icon: 'code', shortcut: 'Mod+I', action: codeBlock },
         ] },
         { label: 'Insert', icon: 'plus', submenu: [
-          { label: 'Link…', icon: 'link', shortcut: 'Mod+K', action: insertLink },
+          { label: 'Link…', icon: 'link', shortcut: 'Mod+K', action: () => insertLink() },
           { label: 'Image or file…', icon: 'image', action: () => $('file-input').click() },
           { label: 'From uploads…', icon: 'library', action: openLibrary },
           'sep',

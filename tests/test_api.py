@@ -159,9 +159,18 @@ def test_admin_needs_login(anon):
     r = anon.get("/admin/edit/x", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/admin/login?next=/admin/edit/x"
     assert anon.get("/admin/login").status_code == 200
-    # Reading stays public.
-    assert anon.get("/api/tree").status_code == 200 and anon.get("/").status_code == 200
+    assert anon.get("/static/app.css").status_code == 200
     assert anon.get("/api/session").json() == {"login_required": True, "signed_in": False}
+
+
+def test_reading_needs_login_too(anon):
+    assert anon.get("/api/tree").status_code == 401
+    assert anon.get("/api/docs/index").status_code == 401
+    assert anon.get("/uploads/x.png").status_code == 401
+    r = anon.get("/docs/guides/setup?x=1", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin/login?next=/docs/guides/setup%3Fx%3D1"
+    r = anon.get("/", follow_redirects=False)
+    assert r.headers["location"] == "/admin/login?next=/"
 
 
 def test_login_and_logout(anon):
@@ -169,9 +178,12 @@ def test_login_and_logout(anon):
     assert r.headers["location"].startswith("/admin/login?error=wrong")
     assert anon.get("/admin/api/uploads").status_code == 401
 
-    # A next= that leaves the admin pages is ignored.
-    r = anon.post("/admin/login", data={"password": PASSWORD, "next": "https://evil.example/"}, follow_redirects=False)
-    assert r.headers["location"] == "/admin/"
+    # A next= that leaves the site is ignored.
+    for evil in ("https://evil.example/", "//evil.example/", "/\\evil.example/"):
+        r = anon.post("/admin/login", data={"password": PASSWORD, "next": evil}, follow_redirects=False)
+        assert r.headers["location"] == "/"
+    r = anon.post("/admin/login", data={"password": PASSWORD, "next": "/docs/a"}, follow_redirects=False)
+    assert r.headers["location"] == "/docs/a"
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=strict" in cookie
     assert anon.get("/admin/api/uploads").status_code == 200

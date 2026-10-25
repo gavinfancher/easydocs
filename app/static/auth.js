@@ -1,5 +1,5 @@
-// ---------- sign-in for the admin pages ----------
-// The server does the real work: admin pages and /admin/api/* need a session cookie, which
+// ---------- sign-in ----------
+// The server does the real work: every page and API needs a session cookie, which
 // /admin/login sets. This only shows the Sign out button, and sends you back to the login page
 // if your session ends while a page is open (see api() in common.js).
 
@@ -11,7 +11,7 @@ const auth = (() => {
 
   async function logout() {
     await fetch('/admin/logout', { method: 'POST' });
-    location.assign('/');
+    location.assign('/admin/login');
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
