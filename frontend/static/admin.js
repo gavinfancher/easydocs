@@ -308,21 +308,93 @@ function setupTree(el) {
 
 // ---------- uploads ----------
 
-/** Upload a file: the API hands out a presigned URL and the browser sends the file straight to it (R2). */
-async function uploadFile(file, folder = '') {
-  const filename = file.name || 'pasted.png';
-  const started = await api('/admin/api/uploads/start',
-    jsonOpts('POST', { filename, content_type: file.type, size: file.size }));
-  const { method, url, headers } = started.upload;
-  // A presigned R2 URL, or (without R2) a path on the API, which needs the token.
-  const local = url.startsWith('/');
-  let res;
-  try { res = await fetch(local ? API_BASE + url : url, { method, headers: local ? auth.headers(headers) : headers, body: file }); }
-  catch { throw new Error('Couldn’t reach file storage'); }
-  if (!res.ok) throw new Error(`File storage said ${res.status}`);
-  const done = await api(`/admin/api/uploads/${encodeURIComponent(started.file)}/finish`, jsonOpts('POST', { folder }));
-  return { ...done, name: started.name };
+/** Send the file with XMLHttpRequest, which (unlike fetch) reports how much has gone. */
+function sendFile(method, url, headers, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(`File storage said ${xhr.status}`));
+    xhr.onerror = () => reject(new Error('Couldn’t reach file storage'));
+    xhr.send(file);
+  });
 }
+
+/**
+ * Upload a file: the API hands out a presigned URL and the browser sends the file straight to it (R2).
+ * Shows in the upload tray while it goes; onProgress(0..1) is for callers with their own progress bar.
+ */
+async function uploadFile(file, folder = '', onProgress = () => { }) {
+  const filename = file.name || 'pasted.png';
+  const row = uploadTray.add(filename);
+  const progress = f => { row.progress(f); onProgress(f); };
+  try {
+    progress(0);
+    const started = await api('/admin/api/uploads/start',
+      jsonOpts('POST', { filename, content_type: file.type, size: file.size }));
+    const { method, url, headers } = started.upload;
+    // A presigned R2 URL, or (without R2) a path on the API, which needs the token.
+    const local = url.startsWith('/');
+    // The bytes are most of the work; the last few percent wait for the API to see them arrive.
+    await sendFile(method, local ? API_BASE + url : url, local ? auth.headers(headers) : headers, file, f => progress(f * .95));
+    const done = await api(`/admin/api/uploads/${encodeURIComponent(started.file)}/finish`, jsonOpts('POST', { folder }));
+    progress(1);
+    row.finish(true);
+    return { ...done, name: started.name };
+  } catch (err) {
+    row.finish(false);
+    throw err;
+  }
+}
+
+// ---------- upload tray ----------
+// A panel in the corner while files upload, wherever they were started (editor, uploads tab,
+// a paste or a drop): each file with its progress. It clears itself a moment after the last one.
+const uploadTray = (() => {
+  let tray = null, hideTimer;
+  function el() {
+    if (!tray) {
+      tray = document.createElement('div');
+      tray.className = 'upload-tray';
+      tray.setAttribute('role', 'status');
+      tray.innerHTML = '<div class="upload-tray-head"></div><div class="upload-tray-list"></div>';
+      document.body.append(tray);
+    }
+    return tray;
+  }
+  function update() {
+    const rows = [...tray.querySelectorAll('.upload-row')], going = rows.filter(r => !r.dataset.state).length;
+    const failed = rows.filter(r => r.dataset.state === 'failed').length;
+    tray.querySelector('.upload-tray-head').textContent = going
+      ? `Uploading ${going} file${going > 1 ? 's' : ''}…`
+      : failed ? `${failed} upload${failed > 1 ? 's' : ''} failed` : `Uploaded ${rows.length} file${rows.length > 1 ? 's' : ''}`;
+    clearTimeout(hideTimer);
+    if (!going) hideTimer = setTimeout(() => { tray.hidden = true; tray.querySelector('.upload-tray-list').replaceChildren(); }, failed ? 6000 : 2500);
+  }
+  function add(name) {
+    const t = el();
+    t.hidden = false;
+    const row = document.createElement('div');
+    row.className = 'upload-row';
+    row.innerHTML = '<span class="upload-name"></span><span class="upload-pct"></span><div class="upload-bar"><i></i></div>';
+    row.querySelector('.upload-name').textContent = name;
+    t.querySelector('.upload-tray-list').append(row);
+    update();
+    return {
+      progress(f) {
+        row.querySelector('i').style.width = Math.round(f * 100) + '%';
+        row.querySelector('.upload-pct').textContent = Math.round(f * 100) + '%';
+      },
+      finish(ok) {
+        row.dataset.state = ok ? 'done' : 'failed';
+        row.querySelector('.upload-pct').textContent = ok ? 'Done' : 'Failed';
+        update();
+      },
+    };
+  }
+  return { add };
+})();
 
 const displayName = n => n.replace(/-[0-9a-f]{8}(\.\w+)$/, '$1');
 const altText = n => displayName(n).replace(/\.\w+$/, '');
@@ -649,11 +721,30 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
 
   search.addEventListener('input', render);
 
+  /** A card at the top of the grid for a file on its way: its preview (if an image) and a progress bar. */
+  function uploadingCard(file) {
+    const card = document.createElement('div');
+    card.className = 'lib-card uploading';
+    const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+    card.innerHTML = `<div class="lib-thumb">${preview ? '<img alt="">' : escapeHtml((file.name.split('.').pop() || 'file').toUpperCase())}</div>
+      <div class="lib-info"><div class="lib-name"></div><div class="lib-meta">Uploading…</div><div class="upload-bar"><i></i></div></div>`;
+    if (preview) card.querySelector('img').src = preview;
+    card.querySelector('.lib-name').textContent = file.name || 'Pasted image';
+    grid.querySelector('.lib-empty')?.remove();
+    grid.prepend(card);
+    return {
+      progress: f => { card.querySelector('.upload-bar i').style.width = Math.round(f * 100) + '%'; },
+      remove: () => { card.remove(); if (preview) URL.revokeObjectURL(preview); },
+    };
+  }
+
   async function upload(files, folder = uploadTarget()) {
-    for (const f of files) {
-      try { await uploadFile(f, folder); } catch (err) { toast(`Upload failed: ${err.message}`); }
+    const cards = [...files].map(uploadingCard);
+    for (const [i, f] of [...files].entries()) {
+      try { await uploadFile(f, folder, cards[i].progress); } catch (err) { toast(`Upload failed: ${err.message}`); }
     }
     await load();
+    cards.forEach(c => c.remove());  // gone already if load() redrew the grid; this frees the previews
   }
 
   if (dropZone) {
