@@ -358,7 +358,10 @@ const uploadTray = (() => {
       tray = document.createElement('div');
       tray.className = 'upload-tray';
       tray.setAttribute('role', 'status');
-      tray.innerHTML = '<div class="upload-tray-head"></div><div class="upload-tray-list"></div>';
+      tray.innerHTML = `<div class="upload-tray-head"><span></span>
+        <button class="icon-btn" aria-label="Close" title="Close (uploads carry on)">${icon('x')}</button></div>
+        <div class="upload-tray-list"></div>`;
+      tray.querySelector('button').onclick = () => { tray.hidden = true; };
       document.body.append(tray);
     }
     return tray;
@@ -366,7 +369,7 @@ const uploadTray = (() => {
   function update() {
     const rows = [...tray.querySelectorAll('.upload-row')], going = rows.filter(r => !r.dataset.state).length;
     const failed = rows.filter(r => r.dataset.state === 'failed').length;
-    tray.querySelector('.upload-tray-head').textContent = going
+    tray.querySelector('.upload-tray-head span').textContent = going
       ? `Uploading ${going} file${going > 1 ? 's' : ''}…`
       : failed ? `${failed} upload${failed > 1 ? 's' : ''} failed` : `Uploaded ${rows.length} file${rows.length > 1 ? 's' : ''}`;
     clearTimeout(hideTimer);
