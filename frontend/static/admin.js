@@ -323,7 +323,7 @@ function sendFile(method, url, headers, file, onProgress) {
 
 /**
  * Upload a file: the API hands out a presigned URL and the browser sends the file straight to it (R2).
- * Shows in the upload tray while it goes; onProgress(0..1) is for callers with their own progress bar.
+ * Shows in the upload panel while it goes; onProgress(0..1) is for callers with their own progress bar.
  */
 async function uploadFile(file, folder = '', onProgress = () => { }) {
   const filename = file.name || 'pasted.png';
@@ -349,7 +349,7 @@ async function uploadFile(file, folder = '', onProgress = () => { }) {
 }
 
 // ---------- upload tray ----------
-// A panel in the corner while files upload, wherever they were started (editor, uploads tab,
+// A panel in the middle of the screen while files upload, wherever they were started (editor, uploads tab,
 // a paste or a drop): each file with its progress. It clears itself a moment after the last one.
 const uploadTray = (() => {
   let tray = null, hideTimer;

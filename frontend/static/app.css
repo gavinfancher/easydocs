@@ -323,9 +323,11 @@ button.danger-fill:hover { filter: brightness(1.08); }
 .lib-actions { display: flex; gap: 4px; padding: 6px 8px 8px; margin-top: auto; }
 .lib-actions button { height: 26px; font-size: 12px; padding: 0 8px; }
 .lib-actions .insert { flex: 1; justify-content: center; }
-/* Uploads on their way: a tray in the corner (uploadTray in admin.js), and a card in the uploads grid. */
+/* Uploads on their way: a panel in the middle of the screen (uploadTray in admin.js), and a card
+   in the uploads grid. */
 .upload-tray {
-  position: fixed; right: 16px; bottom: 16px; z-index: 60; width: min(340px, calc(100vw - 32px));
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 60;
+  width: min(380px, calc(100vw - 32px));
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elv);
   box-shadow: 0 8px 24px rgba(0,0,0,.5); font-size: 13px; overflow: hidden;
 }
