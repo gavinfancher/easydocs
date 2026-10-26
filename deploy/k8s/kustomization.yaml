@@ -22,4 +22,4 @@ resources:
 # and pushes; Argo sees the commit and rolls the Deployment.
 images:
   - name: ghcr.io/gavinfancher/easydocs
-    newTag: 79765a9
+    newTag: 314498f
