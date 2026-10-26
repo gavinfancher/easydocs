@@ -1,6 +1,0 @@
-Bash(ssh ubuntu@10.0.4.161:*)
-Bash(ssh ubuntu@postgres.ad.gavinf.com:*)
-Bash(ssh -o BatchMode=yes ubuntu@10.0.4.161:*)
-Bash(ssh -o BatchMode=yes ubuntu@postgres.ad.gavinf.com:*)
-Bash(rsync:*)
-Bash(docker rm -f mydocs-test-pg)

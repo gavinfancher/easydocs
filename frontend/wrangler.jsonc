@@ -1,6 +1,6 @@
 // easydocs.gavinf.com: the pages, CSS and JS, as static assets on Cloudflare. No Worker code:
 // the pages call the API at easydocs-api.gavinf.com directly (like wishly's api.wishly.dev).
-// Built by `npm run build` (copies app/static into dist/), deployed by Workers Builds.
+// Built by `npm run build` (copies static/ into dist/), deployed by Workers Builds (root directory: frontend).
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "easydocs",

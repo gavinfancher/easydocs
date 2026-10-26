@@ -1,8 +1,8 @@
 #!/bin/sh
-# Rebuild app/static/vendor/codemirror.min.js, the editor's text area, as one file that sets
+# Rebuild static/vendor/codemirror.min.js, the editor's text area, as one file that sets
 # window.CM. Needs Node. Bump the pinned versions here to upgrade.
 set -eu
-out="$(cd "$(dirname "$0")/.." && pwd)/app/static/vendor/codemirror.min.js"
+out="$(cd "$(dirname "$0")/.." && pwd)/static/vendor/codemirror.min.js"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"

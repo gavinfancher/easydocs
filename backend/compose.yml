@@ -1,5 +1,5 @@
-# Local dev: the app plus its own Postgres. There's no login locally (EASYDOCS_LOCAL=1), so the
-# ports only listen on this machine. Data persists in the pgdata volume (`docker compose down -v` wipes it).
+# Local dev: the app plus its own Postgres, serving the pages from ../frontend/static too. There's
+# no login locally (EASYDOCS_LOCAL=1), so the ports only listen on this machine. Data persists in the pgdata volume (`docker compose down -v` wipes it).
 services:
   postgres:
     image: postgres:18.4
@@ -23,6 +23,9 @@ services:
       EASYDOCS_LOCAL: "1"
       EASYDOCS_TITLE: "easydocs"
       EASYDOCS_DATABASE_URL: postgresql://easydocs:easydocs@postgres/easydocs
+      EASYDOCS_STATIC_DIR: /frontend/static
+    volumes:
+      - ../frontend/static:/frontend/static:ro   # edit a page, reload the browser
 
 volumes:
   pgdata:

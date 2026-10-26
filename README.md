@@ -9,7 +9,7 @@ A small self-hosted markdown docs site, with a web editor. Live at https://easyd
 ## How it runs
 
 ```
- browser ──► easydocs.gavinf.com ──── the pages, CSS and JS: static files on Cloudflare (web/)
+ browser ──► easydocs.gavinf.com ──── the pages, CSS and JS: static files on Cloudflare (frontend/)
     │
     ├──────► easydocs-api.gavinf.com ── tunnel ──► cloudflared ──► easydocs (FastAPI)   k8s, namespace easydocs
     │                                                                 ├──► Postgres "easydocs" on postgres.ad.gavinf.com
@@ -34,17 +34,21 @@ presigned GET URLs from `/api/uploads/links` (good for at least an hour, and the
 within it, so the browser caches them). Each file's name, bucket, object key, size, type and
 etag are in the `uploads` table.
 
+```
+backend/    the API (FastAPI): app/, tests/, scripts/, Dockerfile, compose.yml for local dev
+frontend/   the pages, CSS and JS (static/), their build, page routes (_redirects), wrangler.jsonc
+deploy/     Kubernetes (k8s/) and the Argo CD Application (argocd/)
+infra/      Terraform: tunnel, DNS, R2 bucket and its CORS rule
+```
+
 | Piece | Where |
 | --- | --- |
-| API and pages (FastAPI) | `app/main.py` |
-| Postgres access, table layout | `app/store.py` |
-| R2: presigned URLs (SigV4, no SDK) | `app/storage.py` |
-| Admin password and sessions | `app/auth.py`, `app/static/login.html` |
-| Editor text area (CodeMirror; links fold to a chip, markdown unchanged) | `app/static/text-editor.js`, rebuilt with `scripts/build-codemirror.sh` |
-| The site on Cloudflare: build, page routes (`_redirects`), the API's address | `web/` |
-| Kubernetes: API, cloudflared, Secret from Infisical | `deploy/k8s/` |
-| Argo CD Application | `deploy/argocd/easydocs.yaml` |
-| Tunnel, DNS, R2 bucket and its CORS rule | `infra/terraform/` |
+| API routes | `backend/app/main.py` |
+| Postgres access, table layout | `backend/app/store.py` |
+| R2: presigned URLs (SigV4, no SDK) | `backend/app/storage.py` |
+| Admin password and sessions | `backend/app/auth.py`, `frontend/static/login.html`, `frontend/static/auth.js` |
+| Editor text area (CodeMirror; links fold to a chip, markdown unchanged) | `frontend/static/text-editor.js`, rebuilt with `frontend/scripts/build-codemirror.sh` |
+| The API's address in production | `frontend/config.production.js` |
 | Tests, image, deploy | `.github/workflows/ci.yml` |
 
 ### Deploying
@@ -54,7 +58,7 @@ Push to `main`. Two things follow:
 - **The API.** CI tests it, pushes `ghcr.io/gavinfancher/easydocs:<sha>`, and commits that tag to
   `deploy/k8s/kustomization.yaml`. Argo CD sees the commit and rolls the pod (the new one is ready
   before the old one stops). Roll back by reverting the `deploy: easydocs <sha>` commit.
-- **The pages.** Cloudflare Workers Builds runs `npm run build` and `npx wrangler deploy` in `web/`.
+- **The pages.** Cloudflare Workers Builds runs `npm run build` and `npx wrangler deploy` in `frontend/`.
 
 ```sh
 make logs                                   # tail the API on the cluster
@@ -101,22 +105,19 @@ into the `easydocs` Secret in the cluster and restarts the pods when one changes
    profile → Packages → easydocs → Package settings) so the cluster can pull it without credentials.
 5. **Cluster**: `kubectl apply -f deploy/argocd/easydocs.yaml`. Wait for both pods, then check
    `curl https://easydocs-api.gavinf.com/readyz`.
+6. **Pages**: Workers & Pages → Create → Import a repository → `gavinfancher/easydocs`, root
+   directory `frontend`, build command `npm run build`, deploy command `npx wrangler deploy`. The
+   first deploy adds the `easydocs.gavinf.com` custom domain (no DNS record may have that name).
 
 ### Moving over from the VM
 
-The VM still serves `easydocs.gavinf.com` until this, so do it in one go:
+Done on 2026-10-25, apart from:
 
-1. `make uploads-to-r2` copies every uploaded file into R2, keeping its URL (run it with
-   `--dry-run` first to see the list). From here the VM can't show images, so carry on.
-2. In Cloudflare, delete the `easydocs.gavinf.com` DNS record (the old tunnel's route). A Worker's
-   custom domain can't be added while a record has that name.
-3. **Workers Builds**: Workers & Pages → Create → Import a repository → `gavinfancher/easydocs`,
-   root directory `web`, build command `npm run build`, deploy command `npx wrangler deploy`. The
-   first deploy adds the `easydocs.gavinf.com` custom domain.
-4. Open `https://easydocs.gavinf.com`, sign in, and check a doc with an image.
-5. Stop the VM (`ssh ubuntu@easydocs.ad.gavinf.com 'cd /opt/easydocs && docker compose -f deploy/compose.yml down'`).
-   Once you're happy, delete VM 506, the old `easydocs` tunnel, `deploy/compose.yml`,
-   `deploy/cloud-init.yaml` and the `vm-*` Makefile targets.
+1. `make uploads-to-r2` copies the uploads still kept in Postgres into R2, keeping their URLs
+   (`make uploads-to-r2 ARGS=--dry-run` lists them first). Until then they're served from Postgres.
+2. Stop the VM (`ssh ubuntu@easydocs.ad.gavinf.com 'cd /opt/easydocs && docker compose -f deploy/compose.yml down'`).
+   Once you're happy, delete VM 506 and the old `easydocs` tunnel. After that,
+   `backend/scripts/uploads_to_r2.py` and `make uploads-to-r2` can go too.
 
 ### Local dev
 
@@ -125,7 +126,8 @@ make dev           # http://localhost:8000 (EASYDOCS_PORT=8010 make dev if 8000 
 make test          # starts a throwaway postgres:18.4 on 127.0.0.1:5433 the first time
 ```
 
-`make dev` runs the app with its own Postgres container and no login. Without R2 settings, uploads are kept in Postgres.
+`make dev` runs the API with its own Postgres container and no login, and serves the pages from
+`frontend/static` too (edit a page, reload). Without R2 settings, uploads are kept in Postgres.
 
 ## Writing docs
 

@@ -1,7 +1,7 @@
 # Cloudflare Tunnel: cloudflared in the cluster dials out to Cloudflare, so
 # nothing at home needs an open port or a public IP.
 # https://easydocs-api.gavinf.com → tunnel → the cloudflared pod → the easydocs Service.
-# The pages (web/, on easydocs.gavinf.com) call it there; the API allows that origin with CORS.
+# The pages (frontend/, on easydocs.gavinf.com) call it there; the API allows that origin with CORS.
 
 locals {
   api_host = "${var.api_subdomain}.${var.domain}"

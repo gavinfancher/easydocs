@@ -5,15 +5,15 @@
 # test runs everywhere. image and release run only for main. release commits
 # the new tag to deploy/k8s/kustomization.yaml; Argo CD, watching main, sees
 # that commit and rolls the cluster. Nothing here can reach the cluster.
-# (The pages, in web/, are deployed by Cloudflare Workers Builds, not here.)
+# (The pages, in frontend/, are deployed by Cloudflare Workers Builds, not here.)
 name: ci
 
 on:
   push:
     branches: [main]
-    paths: ["app/**", "tests/**", "Dockerfile", "pyproject.toml", "uv.lock", ".github/workflows/ci.yml"]
+    paths: ["backend/**", ".github/workflows/ci.yml"]
   pull_request:
-    paths: ["app/**", "tests/**", "Dockerfile", "pyproject.toml", "uv.lock", ".github/workflows/ci.yml"]
+    paths: ["backend/**", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 permissions:
@@ -32,6 +32,9 @@ jobs:
         options: --health-cmd pg_isready --health-interval 2s --health-retries 15
     env:
       EASYDOCS_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -62,7 +65,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7
         with:
-          context: .
+          context: backend
           platforms: linux/amd64 # the cluster nodes are x86_64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/easydocs:${{ steps.tag.outputs.tag }}

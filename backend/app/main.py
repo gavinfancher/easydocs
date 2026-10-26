@@ -5,7 +5,7 @@ Docs, folders and settings live in Postgres (see store.py); uploaded files in an
 URLs (/uploads/<name>), so moving a doc never breaks its images. Upload folders are only
 labels, so filing an upload never changes its URL.
 
-In production the pages are static files on Cloudflare (web/) at easydocs.gavinf.com, and they
+In production the pages are static files on Cloudflare (frontend/) at easydocs.gavinf.com, and they
 call this API at easydocs-api.gavinf.com (a Cloudflare Tunnel to the cluster), so it allows that
 origin with CORS. Locally this app serves the pages too.
 
@@ -720,7 +720,10 @@ def session(request: Request):
 
 # ---------- pages, static files and uploads ----------
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+# The pages (frontend/static). In production Cloudflare serves them and the image doesn't have
+# them; locally, and in the tests, this app serves them too, from the repo or EASYDOCS_STATIC_DIR.
+STATIC_DIR = os.environ.get("EASYDOCS_STATIC_DIR") or os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "static"))
 
 
 # Docs link uploads as /uploads/<name>. An <img> can't send the session token, so the pages swap
@@ -796,32 +799,28 @@ def readyz():
     return {"status": "ready"}
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    @app.get("/admin")
+    def admin_redirect():
+        return RedirectResponse("/admin/")
 
-@app.get("/admin")
-def admin_redirect():
-    return RedirectResponse("/admin/")
+    @app.get("/admin/login")
+    def login_page():
+        return FileResponse(os.path.join(STATIC_DIR, "login.html"))
 
+    @app.get("/admin/edit")
+    @app.get("/admin/edit/{rel:path}")
+    def editor_page(rel: str = ""):
+        # /admin/edit/<doc path> opens that doc; the page reads the path itself.
+        return FileResponse(os.path.join(STATIC_DIR, "editor.html"))
 
-@app.get("/admin/login")
-def login_page():
-    return FileResponse(os.path.join(STATIC_DIR, "login.html"))
+    @app.get("/admin/{tab:path}")
+    def admin_page(tab: str = ""):
+        return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
 
-
-@app.get("/admin/edit")
-@app.get("/admin/edit/{rel:path}")
-def editor_page(rel: str = ""):
-    # /admin/edit/<doc path> opens that doc; the page reads the path itself.
-    return FileResponse(os.path.join(STATIC_DIR, "editor.html"))
-
-
-@app.get("/admin/{tab:path}")
-def admin_page(tab: str = ""):
-    return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
-
-
-@app.get("/")
-@app.get("/docs/{rel:path}")
-def viewer_page(rel: str = ""):
-    return FileResponse(os.path.join(STATIC_DIR, "viewer.html"))
+    @app.get("/")
+    @app.get("/docs/{rel:path}")
+    def viewer_page(rel: str = ""):
+        return FileResponse(os.path.join(STATIC_DIR, "viewer.html"))

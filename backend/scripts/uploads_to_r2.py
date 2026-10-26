@@ -2,8 +2,8 @@
 in the docs keeps working). Safe to re-run: it only moves files that are still in Postgres, and it
 clears a file's bytes from Postgres only after R2 confirms it has them.
 
-    infisical run --env=prod --path=/ -- uv run python scripts/uploads_to_r2.py           # do it
-    infisical run --env=prod --path=/ -- uv run python scripts/uploads_to_r2.py --dry-run # just list
+    make uploads-to-r2                     # from the repo root: do it
+    make uploads-to-r2 ARGS=--dry-run      # just list
 
 Needs EASYDOCS_DATABASE_URL and the four EASYDOCS_R2_* variables.
 """

@@ -98,6 +98,15 @@ function markUploads(root) {
   });
 }
 
+/** Show a placeholder on an image until it has loaded (or failed). */
+function whileLoading(img) {
+  if (img.tagName !== 'IMG' || (img.complete && img.naturalWidth)) return;
+  img.classList.add('upload-loading');
+  const done = () => img.classList.remove('upload-loading');
+  img.addEventListener('load', done, { once: true });
+  img.addEventListener('error', done, { once: true });
+}
+
 /** Make sure there's a fresh link for each of these upload names. */
 async function fetchUploadLinks(names) {
   const now = Date.now();
@@ -115,11 +124,17 @@ async function fetchUploadLinks(names) {
 /** Fill in links for every [data-upload] element in root. */
 async function resolveUploads(root) {
   const els = [...root.querySelectorAll('[data-upload]')];
-  await fetchUploadLinks(els.map(el => uploadName(el.dataset.upload)));
-  for (const el of els) {
+  const attrOf = el => el.tagName === 'A' ? 'href' : 'src';
+  const fill = () => els.forEach(el => {
     const link = uploadLinks.get(uploadName(el.dataset.upload));
-    if (link) el.setAttribute(el.tagName === 'A' ? 'href' : 'src', link.url);
-  }
+    if (link && link.until > Date.now()) el.setAttribute(attrOf(el), link.url);
+  });
+  fill();                     // links we have already go in at once, so a re-render doesn't flash placeholders
+  els.forEach(whileLoading);  // anything still on its way gets one
+  await fetchUploadLinks(els.map(el => uploadName(el.dataset.upload)));
+  fill();
+  // No link (deleted, or the API is unreachable): stop the placeholder.
+  els.forEach(el => { if (!el.getAttribute(attrOf(el))) el.classList.remove('upload-loading'); });
 }
 
 /** Open an upload in a new tab. The tab opens at once, before the link arrives, so it isn't blocked as a popup. */

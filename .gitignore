@@ -1,8 +1,6 @@
 __pycache__/
 *.py[oc]
 .venv/
-data/
 .env
 .pytest_cache/
 .DS_Store
-deploy/.env

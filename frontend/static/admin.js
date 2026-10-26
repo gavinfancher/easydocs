@@ -365,9 +365,16 @@ function createLibrary({ grid, search, folderNav, onInsert = null, dropZone = nu
   const setCur = f => { cur = f; try { localStorage.setItem(storageKey, JSON.stringify(f)); } catch { } render(); };
   const uploadTarget = () => cur ?? '';
 
+  // Placeholder cards until the first list arrives, so the grid doesn't sit empty.
+  const SKELETON = '<div class="lib-card skeleton" aria-hidden="true"><div class="lib-thumb"></div>'
+    + '<div class="lib-info"><div class="sk-line"></div><div class="sk-line short"></div></div></div>';
+  let loaded = false;
+
   async function load() {
+    if (!loaded) grid.innerHTML = SKELETON.repeat(8);
     try {
       const res = await api('/admin/api/uploads');
+      loaded = true;
       items = res.files; folders = res.folders.sort(byFolderPath);
       if (cur && !folders.includes(cur)) cur = ALL;
       render(); onLoad(items);

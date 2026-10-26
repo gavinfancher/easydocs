@@ -1,5 +1,5 @@
 # The easydocs API: FastAPI, one container. The pages (static files on Cloudflare,
-# web/) call it at easydocs-api.gavinf.com, through the tunnel (cloudflared.yaml).
+# frontend/) call it at easydocs-api.gavinf.com, through the tunnel (cloudflared.yaml).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
