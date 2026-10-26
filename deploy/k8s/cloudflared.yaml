@@ -38,7 +38,7 @@ spec:
       containers:
         - name: cloudflared
           # Pinned: bump on purpose. `latest` would change under us on any restart.
-          image: cloudflare/cloudflared:2026.10.0
+          image: cloudflare/cloudflared:2026.10.3
           args:
             - tunnel
             - --no-autoupdate
