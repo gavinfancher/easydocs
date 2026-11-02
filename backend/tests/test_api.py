@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from app import main, storage, store
-from tests.conftest import PASSWORD
+from app import auth
+from tests.conftest import OTHER_PASSWORD, PASSWORD
 
 
 def create(client, path, content=""):
@@ -78,9 +79,10 @@ def test_move_folder(client):
     assert client.post("/admin/api/move", json={"src": "a", "dst": "a/sub/x"}).status_code == 400
     assert client.post("/admin/api/move", json={"src": "a", "dst": "ab"}).status_code == 409
     assert client.post("/admin/api/move", json={"src": "a", "dst": "z/a"}).status_code == 200
-    paths = sorted(d["sk"] for d in store.query("DOC"))
+    with store.as_owner("admin"):
+        paths = sorted(d["sk"] for d in store.query("DOC"))
+        folders = sorted(f["sk"] for f in store.query("FOLDER"))
     assert paths == ["ab/three", "z/a/one", "z/a/sub/two"]
-    folders = sorted(f["sk"] for f in store.query("FOLDER"))
     assert folders == ["ab", "z", "z/a", "z/a/sub"]
 
 
@@ -112,12 +114,12 @@ def test_upload_validation(client):
     assert post_file(client, "image").json()["url"].endswith(".png")
 
 
-def test_uploads_are_served(client, anon):
+def test_uploads_are_served(client):
     url = upload(client, data=b"\x89PNG")["url"]
-    r = anon.get(url)
+    r = client.get(url)
     assert r.status_code == 200 and r.content == b"\x89PNG" and r.headers["content-type"] == "image/png"
     assert "sandbox" in r.headers["content-security-policy"]
-    assert anon.get("/uploads/nope.png").status_code == 404
+    assert client.get("/uploads/nope.png").status_code == 404
 
 
 def test_uploads_list_rename_delete(client):
@@ -162,7 +164,7 @@ def test_api_needs_a_session(anon):
         assert anon.get(path).status_code == 401, path
     assert anon.post("/admin/api/docs", json={"path": "x"}).status_code == 401
     assert anon.get("/uploads/x.png").status_code == 401
-    assert anon.get("/api/session").json() == {"login_required": True, "signed_in": False}
+    assert anon.get("/api/session").json() == {"login_required": True, "signed_in": False, "user": None}
     # The pages are open: they hold no docs, and send you to sign in when the API says 401.
     for path in ("/", "/docs/guides/setup", "/admin/login", "/admin/edit/x", "/static/app.css"):
         assert anon.get(path).status_code == 200, path
@@ -186,6 +188,61 @@ def test_login_throttled_after_many_failures(anon):
     for _ in range(10):
         anon.post("/api/login", json={"password": "wrong"})
     assert anon.post("/api/login", json={"password": PASSWORD}).status_code == 429
+
+
+def test_login_needs_the_right_user(anon):
+    def login(username, password):
+        return anon.post("/api/login", json={"username": username, "password": password})
+    assert login("gfancher", PASSWORD).status_code == 401  # the admin's password isn't theirs
+    assert login("admin", OTHER_PASSWORD).status_code == 401
+    assert login("nobody", OTHER_PASSWORD).status_code == 401
+    r = login(" GFancher ", OTHER_PASSWORD)
+    assert r.status_code == 200 and r.json()["user"] == "gfancher"
+    me = anon.get("/api/session", headers={"Authorization": "Bearer " + r.json()["token"]}).json()
+    assert me == {"login_required": True, "signed_in": True, "user": "gfancher"}
+
+
+def test_users_only_see_their_own_things(client, other):
+    create(client, "guides/admin-only", "# Secret\nadmin words")
+    client.put("/admin/api/home", json={"heading": "Admin home", "body": ""})
+    name = upload(client, data=b"\x89PNG")["url"].removeprefix("/uploads/")
+    client.post("/admin/api/upload-folders", json={"path": "admin-shots"})
+
+    assert other.get("/api/tree").json() == []
+    assert other.get("/api/docs/guides/admin-only").status_code == 404
+    assert other.get("/api/search", params={"q": "admin words"}).json() == []
+    assert other.get("/api/home").json()["heading"] != "Admin home"
+    assert other.get("/api/home").json()["recent"] == []
+    assert other.get("/admin/api/uploads").json() == {"folders": [], "files": []}
+    assert other.get(f"/uploads/{name}").status_code == 404
+    assert other.post("/api/uploads/links", json={"names": [name]}).json() == {"links": {}}
+
+    # Nor change them.
+    assert other.post("/admin/api/move", json={"src": "guides", "dst": "x"}).status_code == 404
+    assert other.put("/admin/api/docs/guides/admin-only", json={"content": "mine now"}).status_code == 200
+    assert client.get("/api/docs/guides/admin-only").json()["content"] == "# Secret\nadmin words"
+    assert other.delete("/admin/api/docs/guides/admin-only").status_code == 200  # their own copy
+    assert client.get("/api/docs/guides/admin-only").status_code == 200
+    assert other.post(f"/admin/api/uploads/{name}/rename", json={"name": "taken"}).status_code == 404
+    assert other.delete(f"/admin/api/uploads/{name}").status_code == 404
+    assert client.get(f"/uploads/{name}").status_code == 200
+
+    # The same paths are free for each user to use.
+    create(other, "guides/admin-only", "# Theirs")
+    assert client.get("/api/docs/guides/admin-only").json()["title"] == "Secret"
+    assert [c["name"] for c in other.get("/api/tree").json()] == ["guides"]
+
+
+def test_a_signed_link_works_for_whoever_has_it(client, anon):
+    name = upload(client, data=b"\x89PNG")["url"].removeprefix("/uploads/")
+    link = client.post("/api/uploads/links", json={"names": [name]}).json()["links"][name]
+    assert anon.get(link).content == b"\x89PNG"
+
+
+def test_changing_a_password_signs_that_user_out(client, other):
+    store.set_user("gfancher", auth.hash_password("a brand new password"))
+    assert other.get("/api/tree").status_code == 401
+    assert client.get("/api/tree").status_code == 200
 
 
 def test_cors_for_the_site(monkeypatch):

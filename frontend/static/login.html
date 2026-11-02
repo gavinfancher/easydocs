@@ -31,9 +31,11 @@
   <div class="login-wrap">
     <form class="login" id="login">
       <h1>Sign in</h1>
-      <p>This site needs the admin password.</p>
+      <p>Sign in to see your docs.</p>
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
       <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
       <div class="error" id="error" hidden></div>
       <button class="primary" type="submit" id="submit">Sign in</button>
     </form>
@@ -48,7 +50,7 @@
     form.addEventListener('submit', async e => {
       e.preventDefault();
       form.submit.disabled = true;
-      const problem = await auth.signIn(form.password.value);
+      const problem = await auth.signIn(form.username.value, form.password.value);
       form.submit.disabled = false;
       if (!problem) return location.replace(safeNext);
       error.textContent = problem; error.hidden = false;

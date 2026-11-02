@@ -23,10 +23,10 @@ const auth = (() => {
   }
 
   /** Resolves to null when signed in, or the API's reason when not. */
-  async function signIn(password) {
+  async function signIn(username, password) {
     try {
       const res = await fetch(API_BASE + '/api/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) return body.detail || `Sign-in failed (${res.status})`;

@@ -22,7 +22,7 @@ def main(dry_run: bool) -> None:
     names = store.uploads_in_postgres()
     print(f"{len(names)} file(s) in Postgres to move to bucket {storage.BUCKET}")
     for name in names:
-        row = store.get_upload(name)
+        row = store.get_upload(name, any_owner=True)
         if dry_run:
             print(f"  would move {name} ({row['size']:,} bytes)")
             continue

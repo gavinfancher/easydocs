@@ -9,9 +9,11 @@ In production the pages are static files on Cloudflare (frontend/) at easydocs.g
 call this API at easydocs-api.gavinf.com (a Cloudflare Tunnel to the cluster), so it allows that
 origin with CORS. Locally this app serves the pages too.
 
-The whole API, reading included, needs a session token, from signing in with the admin password
-(see auth.py), except with EASYDOCS_LOCAL=1, for local dev (see compose.yml). The pages are
-plain files with no docs in them, so they're open.
+The whole API, reading included, needs a session token, from signing in with a username and
+password (see auth.py), except with EASYDOCS_LOCAL=1, for local dev (see compose.yml), where
+you're always the admin. Each user has their own docs, folders, home page and uploads, and sees
+only those: the store scopes everything to whoever the token belongs to (see store.py). The
+pages are plain files with no docs in them, so they're open.
 """
 
 import hmac
@@ -82,11 +84,18 @@ Use folders like `guides/setup` when creating a doc. Folders show up as
 sections in the sidebar. The first `# Heading` in a doc is its title.
 """
 
+def seed_welcome(user: str) -> None:
+    """Give a user with no docs the welcome doc."""
+    with store.as_owner(user):
+        if not store.any_with_prefix("DOC", ""):
+            store.put(doc_item("index", WELCOME))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init_schema()
-    if not store.any_with_prefix("DOC", ""):
-        store.put(doc_item("index", WELCOME))
+    auth.seed_admin()
+    seed_welcome(store.ADMIN)
     yield
 
 
@@ -121,11 +130,17 @@ OPEN_API = {"/api/login", "/api/session"}
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
+    """Check the session token, and act for its user from here on (see store.OWNER)."""
     path = request.url.path
-    if (LOGIN_REQUIRED and path.startswith(("/api/", "/admin/api/")) and path not in OPEN_API
-            and request.method != "OPTIONS"):
-        if not await run_in_threadpool(auth.valid_session, bearer(request)):
+    if not LOGIN_REQUIRED:
+        with store.as_owner(store.ADMIN):
+            return await call_next(request)
+    if path.startswith(("/api/", "/admin/api/")) and path not in OPEN_API and request.method != "OPTIONS":
+        user = await run_in_threadpool(auth.session_user, bearer(request))
+        if not user:
             return JSONResponse({"detail": "Sign in first"}, status_code=401)
+        with store.as_owner(user):
+            return await call_next(request)
     return await call_next(request)
 
 
@@ -396,8 +411,15 @@ def save_upload_folders(meta: dict) -> None:
     )
 
 
+def upload_name(name: str) -> str:
+    if not re.fullmatch(r"[\w.-]+", name) or name.startswith("."):
+        raise HTTPException(404, "File not found")
+    return name
+
+
 def check_upload(name: str) -> str:
-    if not re.fullmatch(r"[\w.-]+", name) or name.startswith(".") or not store.upload_exists(name):
+    """The name of one of this user's uploads, or a 404."""
+    if not store.upload_exists(upload_name(name)):
         raise HTTPException(404, "File not found")
     return name
 
@@ -524,7 +546,8 @@ def remove_upload(row: dict) -> None:
 def clear_stale_uploads() -> None:
     for row in store.stale_uploads():
         try:
-            remove_upload(row)
+            with store.as_owner(row["owner"]):
+                remove_upload(row)
         except Exception:
             pass  # try again next time
 
@@ -655,9 +678,10 @@ def rename_upload(name: str, body: RenameUploadBody):
     final = f"{new_stem}-{tag}{f.suffix}"
     if final == name:
         return {"name": final, "url": f"/uploads/{final}", "docs": []}
-    if store.upload_exists(final):
+    try:
+        store.rename_upload(name, final)
+    except store.Exists:
         raise HTTPException(409, "A file with that name already exists")
-    store.rename_upload(name, final)
     meta = load_upload_folders()
     if name in meta["files"]:
         meta["files"][final] = meta["files"].pop(name)
@@ -690,19 +714,21 @@ def delete_upload(name: str):
 # ---------- sign in / out ----------
 
 class LoginBody(BaseModel):
+    username: str = store.ADMIN  # pages from before there were users only send the password
     password: str
 
 
 @app.post("/api/login")
 def login(request: Request, body: LoginBody):
-    """The password for a session token. The pages keep it and send it as `Authorization: Bearer`."""
+    """A username and password for a session token. The pages keep it and send it as `Authorization: Bearer`."""
     ip = client_ip(request)
     if auth.throttled(ip):
         raise HTTPException(429, "Too many tries. Wait 15 minutes, then try again.")
-    if not auth.check_password(body.password):
+    username = body.username.strip().lower()
+    if not auth.verify(username, body.password):
         auth.record_failure(ip)
-        raise HTTPException(401, "That password isn’t right.")
-    return {"token": auth.start_session(), "days": auth.SESSION_DAYS}
+        raise HTTPException(401, "That username or password isn’t right.")
+    return {"token": auth.start_session(username), "user": username, "days": auth.SESSION_DAYS}
 
 
 @app.post("/api/logout")
@@ -713,9 +739,9 @@ def logout(request: Request):
 
 @app.get("/api/session")
 def session(request: Request):
-    """Whether this visitor is signed in."""
-    return {"login_required": LOGIN_REQUIRED,
-            "signed_in": not LOGIN_REQUIRED or auth.valid_session(bearer(request))}
+    """Whether this visitor is signed in, and as whom."""
+    user = store.ADMIN if not LOGIN_REQUIRED else auth.session_user(bearer(request))
+    return {"login_required": LOGIN_REQUIRED, "signed_in": user is not None, "user": user}
 
 
 # ---------- pages, static files and uploads ----------
@@ -752,7 +778,7 @@ def upload_links(body: UploadLinksBody):
     links = {}
     for name in body.names[:500]:
         try:
-            row = store.get_upload(check_upload(name))
+            row = store.get_upload(upload_name(name))
         except (store.Missing, HTTPException):
             continue
         if row["status"] == "ready":
@@ -762,11 +788,18 @@ def upload_links(body: UploadLinksBody):
 
 @app.get("/uploads/{name}")
 def get_upload(name: str, request: Request, expires: int = 0, sig: str = ""):
+    # A signed link was only ever given to the file's owner, so it works for whoever has it.
+    # Otherwise this needs a session, and only finds that user's own files.
     signed = expires > time.time() and hmac.compare_digest(sig, link_signature(name, expires))
-    if LOGIN_REQUIRED and not signed and not auth.valid_session(bearer(request)):
+    user = None if signed else store.ADMIN if not LOGIN_REQUIRED else auth.session_user(bearer(request))
+    if not signed and not user:
         raise HTTPException(401, "Sign in first")
     try:
-        row = store.get_upload(check_upload(name))
+        if signed:
+            row = store.get_upload(upload_name(name), any_owner=True)
+        else:
+            with store.as_owner(user):
+                row = store.get_upload(upload_name(name))
     except (store.Missing, HTTPException):
         raise HTTPException(404, "File not found")
     if row["status"] != "ready":

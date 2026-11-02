@@ -21,9 +21,11 @@ The same shape as wishly. The pages are static files, so Cloudflare serves them 
 free, with no Worker code. They call the API on its own hostname, a Cloudflare Tunnel to the
 cluster, so nothing at home has an open port. The API allows the site's origin with CORS.
 
-The whole site needs the admin password, reading included. Signing in at `/admin/login` gets a
-session token (30 days), kept in the browser and sent as `Authorization: Bearer` on every API
-call. Signing out deletes it on the server. Ten wrong passwords from one IP pause logins for 15
+The whole site needs signing in, reading included. Each user has their own docs, folders, home
+page and uploads, and sees only those. The admin account is `admin`, with the password from
+`EASYDOCS_ADMIN_PASSWORD_HASH`; it owns everything from before there were users. Signing in at
+`/admin/login` gets a session token (30 days), kept in the browser and sent as
+`Authorization: Bearer` on every API call. Signing out deletes it on the server. Ten wrong passwords from one IP pause logins for 15
 minutes. The pages themselves hold no docs; the API checks the token on every call, and a page
 whose call comes back 401 sends you to sign in.
 
@@ -46,7 +48,7 @@ infra/      Terraform: tunnel, DNS, R2 bucket and its CORS rule
 | API routes | `backend/app/main.py` |
 | Postgres access, table layout | `backend/app/store.py` |
 | R2: presigned URLs (SigV4, no SDK) | `backend/app/storage.py` |
-| Admin password and sessions | `backend/app/auth.py`, `frontend/static/login.html`, `frontend/static/auth.js` |
+| Users, passwords and sessions | `backend/app/auth.py`, `frontend/static/login.html`, `frontend/static/auth.js` |
 | Editor text area (CodeMirror; links fold to a chip, markdown unchanged) | `frontend/static/text-editor.js`, rebuilt with `frontend/scripts/build-codemirror.sh` |
 | The API's address in production | `frontend/config.production.js` |
 | Tests, image, deploy | `.github/workflows/ci.yml` |
@@ -64,6 +66,13 @@ Push to `main`. Two things follow:
 make logs                                   # tail the API on the cluster
 kubectl -n easydocs get pods                # 1 easydocs + 1 cloudflared
 curl https://easydocs-api.gavinf.com/readyz # {"status":"ready"}
+```
+
+Add a user, or change one's password (which signs them out everywhere). It asks for the password:
+
+```sh
+kubectl -n easydocs exec -it deploy/easydocs -- /app/.venv/bin/python -m app.auth set-user <name>
+kubectl -n easydocs exec -it deploy/easydocs -- /app/.venv/bin/python -m app.auth list-users
 ```
 
 ### Secrets
