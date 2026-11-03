@@ -91,7 +91,7 @@ jobs:
         env:
           TAG: ${{ needs.image.outputs.tag }}
         run: |
-          sed -i -E "s/^(    newTag: ).*/\1${TAG}/" deploy/k8s/kustomization.yaml
+          sed -i -E "s/^(    newTag: ).*/\1\"${TAG}\"/" deploy/k8s/kustomization.yaml  # quoted: an all-digit SHA would parse as a number
           git diff --exit-code --quiet && { echo "already at ${TAG}"; exit 0; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
