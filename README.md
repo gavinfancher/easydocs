@@ -170,3 +170,13 @@ make test          # starts a throwaway postgres:18.4 on 127.0.0.1:5433 the firs
 - Uploads can be up to 25 MB.
 - Search and the uploads "used in" list read every doc. That's fine for hundreds of docs; past that,
   Postgres full-text search is the next step.
+
+## Known gaps
+
+- **One replica, on purpose.** The sign-in throttle (10 wrong passwords per IP per 15 minutes)
+  lives in the API's memory, so a second replica would count separately and halve its value.
+  Moving the counter into Postgres would allow more replicas. Until then, a dead node means the
+  site is down for about a minute while the pod is rescheduled.
+- **No database backups.** Docs live in Postgres on `postgres.ad.gavinf.com`, one box shared with
+  wishly and homecloud, with no backups. Uploads are safer: they're in R2.
+- **No alerting.** Nothing tells me if the API or its tunnel is down.
